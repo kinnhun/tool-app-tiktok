@@ -1,4 +1,4 @@
-2026/05/11-20:09:49.103 5e88 Reusing MANIFEST D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata/MANIFEST-000001
-2026/05/11-20:09:49.104 5e88 Recovering log #3
-2026/05/11-20:09:49.104 5e88 (ignoring error) D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata/000003.log: dropping 347 bytes; Corruption: checksum mismatch
-2026/05/11-20:09:49.104 5e88 Reusing old log D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata/000003.log 
+2026/05/12-16:24:16.425 5234 Reusing MANIFEST D:\tool-app-tiktok\tiktok_session\Default\shared_proto_db\metadata/MANIFEST-000001
+2026/05/12-16:24:16.437 5234 Recovering log #3
+2026/05/12-16:24:16.437 5234 (ignoring error) D:\tool-app-tiktok\tiktok_session\Default\shared_proto_db\metadata/000003.log: dropping 551 bytes; Corruption: checksum mismatch
+2026/05/12-16:24:16.438 5234 Reusing old log D:\tool-app-tiktok\tiktok_session\Default\shared_proto_db\metadata/000003.log 

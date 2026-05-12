@@ -1,3 +1,6 @@
-2026/05/11-19:43:44.775 6818 Reusing MANIFEST D:\tool tiltol\tiktok_view_session\Default\Session Storage/MANIFEST-000001
-2026/05/11-19:43:44.776 6818 Recovering log #10
-2026/05/11-19:43:44.778 6818 Reusing old log D:\tool tiltol\tiktok_view_session\Default\Session Storage/000010.log 
+2026/05/11-19:59:34.140 6254 Reusing MANIFEST D:\tool tiltol\tiktok_view_session\Default\Session Storage/MANIFEST-000001
+2026/05/11-19:59:34.141 6254 Recovering log #10
+2026/05/11-19:59:34.143 6254 Reusing old log D:\tool tiltol\tiktok_view_session\Default\Session Storage/000010.log 
+2026/05/11-20:11:34.158 518c Level-0 table #14: started
+2026/05/11-20:11:34.170 518c Level-0 table #14: 26532 bytes OK
+2026/05/11-20:11:34.173 518c Delete type=0 #10
