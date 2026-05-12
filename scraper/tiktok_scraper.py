@@ -1,6 +1,6 @@
 """
-TikTok Scraper - Fast Version for Render (Low RAM)
-Bypass Playwright and use direct requests.
+TikTok Scraper - Ultra Fast V2 for Render
+More resilient product extraction without browser.
 """
 
 import re
@@ -9,29 +9,24 @@ import os
 import requests
 from datetime import datetime
 
-# Path to session cookies (if any)
 SESSION_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tiktok_session", "cookies.json")
 
 def _get_stored_cookies():
-    """Load cookies from file if exists, otherwise return empty list."""
     if os.path.exists(SESSION_FILE):
         try:
-            with open(SESSION_FILE, 'r') as f:
-                return json.load(f)
+            with open(SESSION_FILE, 'r') as f: return json.load(f)
         except: pass
     return []
 
 def _build_session():
     session = requests.Session()
-    cookies = _get_stored_cookies()
-    for c in cookies:
-        session.cookies.set(c['name'], c['value'], domain=c.get('domain', ''))
-    
+    # Desktop headers are sometimes more stable for price scraping
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "vi-VN,vi;q=0.9",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
         "Referer": "https://www.tiktok.com/",
+        "Cache-Control": "no-cache",
     })
     return session
 
@@ -41,60 +36,80 @@ def _parse_pdp_html(html, url):
         'product_link': url, 'shop_name': '', 'note': '', 'product_images': [],
     }
     
+    # Clean HTML from escapes
+    html = html.replace('\\"', '"').replace('\\/', '/')
+    
     # Name
-    name_match = re.search(r'<h1[^>]*>.*?<span[^>]*>(.*?)</span>', html, re.DOTALL)
-    if name_match: details['product_name'] = name_match.group(1).strip()
+    name_match = re.search(r'"title":"([^"]+)"', html)
+    if name_match: details['product_name'] = name_match.group(1)
     
-    # Prices - TikTok Shop VN format
-    price_match = re.search(r'₫</span>.*?font-size:3[26]px[^>]*>([\d.]+)</span>', html, re.DOTALL)
-    if price_match:
-        details['current_price'] = f"₫{price_match.group(1)}"
-        details['sale_price'] = details['current_price']
+    if not details['product_name']:
+        name_match = re.search(r'<title>(.*?)</title>', html)
+        if name_match: details['product_name'] = name_match.group(1).replace(" - TikTok Shop", "")
+
+    # Prices
+    # Search for price patterns like "₫123.456" or "123.456₫"
+    price_patterns = [
+        r'₫\s*([\d.]+)',
+        r'([\d.]+)\s*₫',
+        r'"sale_price":"([\d.]+)"',
+        r'"price":\s*(\d+)'
+    ]
     
-    orig_match = re.search(r'line-through[^>]*>[\s]*([\d.]+)₫', html)
-    if orig_match: details['original_price'] = f"₫{orig_match.group(1)}"
-    
-    # Fallback
-    if not details['current_price']:
-        prices = re.findall(r'([\d]{1,3}(?:\.[\d]{3})+)\s*₫', html)
-        if prices: details['current_price'] = f"₫{prices[0]}"
-        
+    for pattern in price_patterns:
+        match = re.search(pattern, html)
+        if match:
+            val = match.group(1)
+            if val.isdigit() and int(val) > 1000:
+                details['current_price'] = f"₫{int(val):,}".replace(",", ".")
+                break
+            elif "." in val:
+                details['current_price'] = f"₫{val}"
+                break
+                
+    details['sale_price'] = details['current_price']
     return details
 
 def _get_pdp_url(video_url):
-    """Extract PDP URL from video page using simple requests."""
+    """Scan video page for ANY product links."""
+    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"}
     try:
-        resp = requests.get(video_url, headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X)"}, timeout=10)
-        # Look for the hidden JSON data
-        match = re.search(r'id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([^<]+)</script>', resp.text)
-        if match:
-            data = json.loads(match.group(1))
-            # Drill down to find the shop anchor
-            item = data.get('__DEFAULT_SCOPE__', {}).get('webapp.reflow.video.detail', {}).get('itemInfo', {}).get('itemStruct', {})
-            for anchor in item.get('anchors', []):
-                extra = json.loads(anchor.get('extra', '{}'))
-                if isinstance(extra, list): extra = extra[0]
-                inner = json.loads(extra.get('extra', '{}')) if isinstance(extra.get('extra'), str) else extra
-                if inner.get('seo_url'):
-                    return inner['seo_url'], inner.get('title', '')
-    except: pass
+        resp = requests.get(video_url, headers=headers, timeout=10, allow_redirects=True)
+        html = resp.text
+        
+        # Strategy 1: Look for explicit /pdp/ or /product/ links
+        pdp_match = re.search(r'(https?://[a-zA-Z0-9.-]*tiktok\.com/[^"\'\s]*/(?:pdp|product)/[\d]+)', html)
+        if pdp_match:
+            return pdp_match.group(1), ""
+            
+        # Strategy 2: Scan JSON data
+        json_matches = re.findall(r'id="__[A-Z_]+__"[^>]*>([^<]+)</script>', html)
+        for json_str in json_matches:
+            # Look for seo_url directly in string to avoid complex parsing
+            seo_match = re.search(r'"seo_url":"(https?://[^"]+)"', json_str)
+            if seo_match:
+                url = seo_match.group(1).replace("\\u002F", "/")
+                title_match = re.search(r'"title":"([^"]+)"', json_str)
+                return url, title_match.group(1) if title_match else ""
+                
+    except Exception as e:
+        print(f"  ⚠ Lỗi lấy PDP URL: {e}")
     return None, ''
 
 async def scrape_tiktok_product(url):
-    """Ultra-fast version: NO BROWSER, NO RAM ISSUES."""
-    print(f"🚀 [Scraper] Đang xử lý: {url[:50]}...")
+    print(f"🚀 [Webhook] Xử lý: {url[:50]}...")
     
     pdp_url = url
     name_fallback = ''
     
     if '/pdp/' not in url and 'shop.tiktok' not in url:
-        print("  → Phân tích link video...")
         pdp_url, name_fallback = _get_pdp_url(url)
         
     if not pdp_url:
-        return {'status': 'Cần mở App', 'note': 'Không tìm thấy sản phẩm hoặc link Affiliate'}
+        print("  ❌ Không tìm thấy link sản phẩm")
+        return {'status': 'Cần mở App', 'note': 'Video này không chứa link sản phẩm web-view'}
 
-    print(f"  → Đang lấy giá từ: {pdp_url[:50]}...")
+    print(f"  → Truy cập trang sản phẩm: {pdp_url[:50]}...")
     session = _build_session()
     try:
         resp = session.get(pdp_url, timeout=15)
@@ -106,10 +121,12 @@ async def scrape_tiktok_product(url):
                 result['status'] = 'Thành công'
                 print(f"  ✅ Lấy được giá: {result['current_price']}")
                 return result
+            else:
+                print("  ⚠ Không tìm thấy giá trong HTML")
     except Exception as e:
-        print(f"  ❌ Lỗi: {e}")
+        print(f"  ❌ Lỗi truy cập: {e}")
         
-    return {'status': 'Lỗi', 'note': 'Không lấy được giá (có thể bị chặn)'}
+    return {'status': 'Lỗi', 'note': 'Không lấy được giá (TikTok chặn hoặc hết hạn session)'}
 
 def validate_tiktok_url(url): return (True, "OK")
 async def process_single_link(url): return await scrape_tiktok_product(url)
