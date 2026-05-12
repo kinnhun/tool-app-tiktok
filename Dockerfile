@@ -1,21 +1,18 @@
-# Use the official Playwright image which has all dependencies pre-installed
-FROM mcr.microsoft.com/playwright/python:v1.49.1-jammy
+FROM python:3.11-slim
 
-# Set working directory
 WORKDIR /app
 
-# Copy requirements and install
+# Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browser (system dependencies are already in the image)
-RUN playwright install chromium
-
-# Copy application code
+# Copy source code
 COPY . .
 
-# Expose port
-EXPOSE 5000
+# Environment settings for faster logging
+ENV PYTHONUNBUFFERED=1
+ENV PORT=10000
 
-# Command to run the application
+EXPOSE 10000
+
 CMD ["python", "main.py"]
