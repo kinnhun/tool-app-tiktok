@@ -1,0 +1,138 @@
+[0511/200956.915:WARNING:content\browser\btm\btm_database.cc:128] Failed to initialize the DIPS SQLite database.
+[0511/200956.916:ERROR:net\disk_cache\cache_util_win.cc:25] Unable to move the cache: Access is denied. (0x5)
+[0511/200956.916:ERROR:net\disk_cache\cache_util_win.cc:25] Unable to move the cache: Access is denied. (0x5)
+[0511/200956.916:ERROR:net\disk_cache\cache_util_win.cc:25] Unable to move the cache: Access is denied. (0x5)
+[0511/200956.917:ERROR:net\disk_cache\disk_cache.cc:272] Unable to create cache
+[0511/200956.917:ERROR:gpu\ipc\host\gpu_disk_cache.cc:725] Gpu Cache Creation failed: -2
+[0511/200956.917:ERROR:net\disk_cache\disk_cache.cc:272] Unable to create cache
+[0511/200956.917:ERROR:gpu\ipc\host\gpu_disk_cache.cc:725] Gpu Cache Creation failed: -2
+[0511/200956.917:ERROR:net\disk_cache\disk_cache.cc:272] Unable to create cache
+[0511/200956.917:ERROR:gpu\ipc\host\gpu_disk_cache.cc:725] Gpu Cache Creation failed: -2
+[0511/200957.222:INFO:CONSOLE:0] "The Content Security Policy directive 'upgrade-insecure-requests' is ignored when delivered in a report-only policy.", source: https://www.tiktok.com/foryou (0)
+[0511/200957.369:INFO:CONSOLE:1] "Reflect is already polyfilled.", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/200957.431:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/200957.431:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/200957.431:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/200957.432:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/200957.432:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/200957.434:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/200957.434:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/200957.434:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/200957.434:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/200957.467:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/200957.471:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/200957.471:INFO:CONSOLE:2] "loadable: `loadableReady()` requires state, please use `getScriptTags` or `getScriptElements` server-side", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/80699.ff5f21df.js (2)
+[0511/200957.724:INFO:CONSOLE:1] "[useFYPRecommendListFirstPull] originParams [object Object] expParams [object Object] false", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/async/foryou.islands.4776adef.js (1)
+[0511/200957.727:INFO:CONSOLE:1] "[getRecommendList] originParams [object Object] expParams [object Object] false", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/atom.init.296db8e8.js (1)
+[0511/200957.836:INFO:CONSOLE:1] ".", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/200957.874:INFO:CONSOLE:1] "Error", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/200957.874:INFO:CONSOLE:1] "Error", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/200958.093:INFO:CONSOLE:1] "Error", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/200958.206:ERROR:net\disk_cache\cache_util_win.cc:25] Unable to move the cache: Access is denied. (0x5)
+[0511/200958.206:ERROR:net\disk_cache\cache_util_win.cc:25] Unable to move the cache: Access is denied. (0x5)
+[0511/200958.206:ERROR:net\disk_cache\disk_cache.cc:272] Unable to create cache
+[0511/200958.206:ERROR:gpu\ipc\host\gpu_disk_cache.cc:725] Gpu Cache Creation failed: -2
+[0511/200958.206:ERROR:net\disk_cache\disk_cache.cc:272] Unable to create cache
+[0511/200958.206:ERROR:gpu\ipc\host\gpu_disk_cache.cc:725] Gpu Cache Creation failed: -2
+[0511/200958.206:ERROR:net\disk_cache\cache_util_win.cc:25] Unable to move the cache: Access is denied. (0x5)
+[0511/200958.206:ERROR:net\disk_cache\disk_cache.cc:272] Unable to create cache
+[0511/200958.206:ERROR:gpu\ipc\host\gpu_disk_cache.cc:725] Gpu Cache Creation failed: -2
+[0511/200958.215:INFO:CONSOLE:1] "Error", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/200958.223:WARNING:content\browser\btm\btm_database.cc:128] Failed to initialize the DIPS SQLite database.
+[0511/200958.246:INFO:CONSOLE:2] "ws.opened", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/async/64887.aa44c2fe.js (2)
+[0511/200958.256:INFO:CONSOLE:1] "filter merge event: sibyl_sdk_collector_init_result error, pls check Converting circular structure to JSON
+    --> starting at object with constructor 'e'
+    |     property 'pluginInstances' -> object with constructor 'Array'
+    |     index 0 -> object with constructor 'e'
+    --- property 'collect' closes the circle", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/npm-dp-byted-tea-sdk-oversea.7e89fb32.js (1)
+[0511/200958.256:INFO:CONSOLE:2] "Uncaught (in promise) TypeError: a.init is not a function", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/async/64887.aa44c2fe.js (2)
+[0511/200958.790:ERROR:net\disk_cache\cache_util_win.cc:25] Unable to move the cache: Access is denied. (0x5)
+[0511/200958.790:ERROR:net\disk_cache\cache_util_win.cc:25] Unable to move the cache: Access is denied. (0x5)
+[0511/200958.790:ERROR:net\disk_cache\cache_util_win.cc:25] Unable to move the cache: Access is denied. (0x5)
+[0511/200958.792:ERROR:net\disk_cache\disk_cache.cc:272] Unable to create cache
+[0511/200958.792:ERROR:gpu\ipc\host\gpu_disk_cache.cc:725] Gpu Cache Creation failed: -2
+[0511/200958.792:ERROR:net\disk_cache\disk_cache.cc:272] Unable to create cache
+[0511/200958.792:ERROR:gpu\ipc\host\gpu_disk_cache.cc:725] Gpu Cache Creation failed: -2
+[0511/200958.792:ERROR:net\disk_cache\disk_cache.cc:272] Unable to create cache
+[0511/200958.792:ERROR:gpu\ipc\host\gpu_disk_cache.cc:725] Gpu Cache Creation failed: -2
+[0511/200958.930:WARNING:components\leveldb_proto\internal\leveldb_database.cc:124] Unable to open D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata: IO error: D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata/LOCK: Access denied. (ChromeMethodBFE: 15::LockFile::5)
+[0511/200958.991:WARNING:content\browser\btm\btm_database.cc:128] Failed to initialize the DIPS SQLite database.
+[0511/200959.182:INFO:CONSOLE:1] "Error", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/ttweb_webmssdk_ex/1.0.0.2559/webmssdk_ex.js (1)
+[0511/200959.233:INFO:CONSOLE:1] "Error", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/ttweb_webmssdk_ex/1.0.0.2559/webmssdk_ex.js (1)
+[0511/200959.508:WARNING:content\browser\btm\btm_database.cc:128] Failed to initialize the DIPS SQLite database.
+[0511/200959.511:ERROR:net\disk_cache\cache_util_win.cc:25] Unable to move the cache: Access is denied. (0x5)
+[0511/200959.513:ERROR:net\disk_cache\cache_util_win.cc:25] Unable to move the cache: Access is denied. (0x5)
+[0511/200959.513:ERROR:net\disk_cache\cache_util_win.cc:25] Unable to move the cache: Access is denied. (0x5)
+[0511/200959.514:ERROR:net\disk_cache\disk_cache.cc:272] Unable to create cache
+[0511/200959.514:ERROR:gpu\ipc\host\gpu_disk_cache.cc:725] Gpu Cache Creation failed: -2
+[0511/200959.515:ERROR:net\disk_cache\disk_cache.cc:272] Unable to create cache
+[0511/200959.515:ERROR:gpu\ipc\host\gpu_disk_cache.cc:725] Gpu Cache Creation failed: -2
+[0511/200959.515:ERROR:net\disk_cache\disk_cache.cc:272] Unable to create cache
+[0511/200959.515:ERROR:gpu\ipc\host\gpu_disk_cache.cc:725] Gpu Cache Creation failed: -2
+[0511/200959.924:ERROR:components\services\storage\service_worker\service_worker_storage.cc:1808] Failed to delete the database: Database IO error
+[0511/200959.955:INFO:CONSOLE:1] "The Content Security Policy directive 'upgrade-insecure-requests' is ignored when delivered in a report-only policy.", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/200959.957:INFO:CONSOLE:1] "The Content Security Policy directive 'upgrade-insecure-requests' is ignored when delivered in a report-only policy.", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/200959.988:INFO:CONSOLE:1] "The Content Security Policy directive 'upgrade-insecure-requests' is ignored when delivered in a report-only policy.", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/200959.988:INFO:CONSOLE:1] "The Content Security Policy directive 'upgrade-insecure-requests' is ignored when delivered in a report-only policy.", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/201000.191:INFO:CONSOLE:1] "The Content Security Policy directive 'upgrade-insecure-requests' is ignored when delivered in a report-only policy.", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/201000.191:INFO:CONSOLE:1] "The Content Security Policy directive 'upgrade-insecure-requests' is ignored when delivered in a report-only policy.", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/201000.205:WARNING:components\leveldb_proto\internal\leveldb_database.cc:124] Unable to open D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata: IO error: D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata/LOCK: Access denied. (ChromeMethodBFE: 15::LockFile::5)
+[0511/201000.228:INFO:CONSOLE:1] "The Content Security Policy directive 'upgrade-insecure-requests' is ignored when delivered in a report-only policy.", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/201000.229:INFO:CONSOLE:1] "The Content Security Policy directive 'upgrade-insecure-requests' is ignored when delivered in a report-only policy.", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/201000.814:WARNING:components\leveldb_proto\internal\leveldb_database.cc:124] Unable to open D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata: IO error: D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata/LOCK: Access denied. (ChromeMethodBFE: 15::LockFile::5)
+[0511/201000.861:INFO:CONSOLE:0] "The Content Security Policy directive 'upgrade-insecure-requests' is ignored when delivered in a report-only policy.", source: https://www.tiktok.com/foryou (0)
+[0511/201001.187:ERROR:components\services\storage\service_worker\service_worker_storage.cc:1808] Failed to delete the database: Database IO error
+[0511/201001.531:WARNING:components\leveldb_proto\internal\leveldb_database.cc:124] Unable to open D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata: IO error: D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata/LOCK: Access denied. (ChromeMethodBFE: 15::LockFile::5)
+[0511/201001.811:ERROR:components\services\storage\service_worker\service_worker_storage.cc:1808] Failed to delete the database: Database IO error
+[0511/201001.878:INFO:CONSOLE:0] "The Content Security Policy directive 'upgrade-insecure-requests' is ignored when delivered in a report-only policy.", source: https://www.tiktok.com/foryou (0)
+[0511/201001.954:INFO:CONSOLE:1] "Reflect is already polyfilled.", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201002.001:INFO:CONSOLE:1] "Reflect is already polyfilled.", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201002.148:INFO:CONSOLE:0] "The Content Security Policy directive 'upgrade-insecure-requests' is ignored when delivered in a report-only policy.", source: https://www.tiktok.com/foryou (0)
+[0511/201002.231:WARNING:components\leveldb_proto\internal\leveldb_database.cc:124] Unable to open D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata: IO error: D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata/LOCK: Access denied. (ChromeMethodBFE: 15::LockFile::5)
+[0511/201002.842:WARNING:components\leveldb_proto\internal\leveldb_database.cc:124] Unable to open D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata: IO error: D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata/LOCK: Access denied. (ChromeMethodBFE: 15::LockFile::5)
+[0511/201002.954:INFO:CONSOLE:1] "Reflect is already polyfilled.", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201003.150:INFO:CONSOLE:0] "The Content Security Policy directive 'upgrade-insecure-requests' is ignored when delivered in a report-only policy.", source: https://www.tiktok.com/foryou (0)
+[0511/201003.188:INFO:CONSOLE:1] "Consume appContext before init", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201003.559:WARNING:components\leveldb_proto\internal\leveldb_database.cc:124] Unable to open D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata: IO error: D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata/LOCK: Access denied. (ChromeMethodBFE: 15::LockFile::5)
+[0511/201004.242:WARNING:components\leveldb_proto\internal\leveldb_database.cc:124] Unable to open D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata: IO error: D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata/LOCK: Access denied. (ChromeMethodBFE: 15::LockFile::5)
+[0511/201005.577:WARNING:components\leveldb_proto\internal\leveldb_database.cc:124] Unable to open D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata: IO error: D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata/LOCK: Access denied. (ChromeMethodBFE: 15::LockFile::5)
+[0511/201005.991:INFO:CONSOLE:1] "Reflect is already polyfilled.", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201006.119:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201006.120:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201006.120:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201006.120:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201006.121:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201006.122:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201006.124:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201006.124:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201006.124:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201006.187:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201006.195:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201006.196:INFO:CONSOLE:2] "loadable: `loadableReady()` requires state, please use `getScriptTags` or `getScriptElements` server-side", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/80699.ff5f21df.js (2)
+[0511/201006.261:WARNING:components\leveldb_proto\internal\leveldb_database.cc:124] Unable to open D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata: IO error: D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata/LOCK: Access denied. (ChromeMethodBFE: 15::LockFile::5)
+[0511/201006.449:INFO:CONSOLE:1] ".", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/201006.496:INFO:CONSOLE:2] "set global cache [object Object]", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/foryou-prefetch.0d9ce556.js (2)
+[0511/201006.548:INFO:CONSOLE:1] "Error", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/201006.548:INFO:CONSOLE:1] "Error", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/201007.040:INFO:CONSOLE:1] "[useFYPRecommendListFirstPull] originParams [object Object] expParams [object Object] false", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/async/foryou.islands.4776adef.js (1)
+[0511/201007.047:INFO:CONSOLE:1] "[getRecommendList] originParams [object Object] expParams [object Object] false", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/atom.init.296db8e8.js (1)
+[0511/201007.113:INFO:CONSOLE:1] "Error", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/201007.231:INFO:CONSOLE:1] "Error", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/201007.601:WARNING:components\leveldb_proto\internal\leveldb_database.cc:124] Unable to open D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata: IO error: D:\tool tiltol\tiktok_session\Default\shared_proto_db\metadata/LOCK: Access denied. (ChromeMethodBFE: 15::LockFile::5)
+[0511/201008.015:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201008.016:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201008.016:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201008.016:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201008.016:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201008.017:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201008.018:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201008.018:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201008.018:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201008.069:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201008.073:INFO:CONSOLE:1] "AppContext will be overwritten", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)
+[0511/201008.073:INFO:CONSOLE:2] "loadable: `loadableReady()` requires state, please use `getScriptTags` or `getScriptElements` server-side", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/80699.ff5f21df.js (2)
+[0511/201008.208:INFO:CONSOLE:1] ".", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/201008.242:INFO:CONSOLE:2] "set global cache [object Object]", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/foryou-prefetch.0d9ce556.js (2)
+[0511/201008.267:INFO:CONSOLE:1] "Error", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/201008.267:INFO:CONSOLE:1] "Error", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/webmssdk/1.0.0.368/webmssdk.js (1)
+[0511/201008.403:INFO:CONSOLE:1] "Consume appContext before init", source: https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/webapp/main/react-v18/webapp-desktop/static/js/webapp-desktop.860d1a87.js (1)

@@ -1,0 +1,9 @@
+flask==3.1.1
+flask-cors==5.0.1
+gspread==6.1.4
+google-auth==2.38.0
+google-api-python-client==2.160.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.1
+playwright==1.49.1
+requests==2.32.3
