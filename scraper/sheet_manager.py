@@ -24,10 +24,21 @@ CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config',
 
 def get_client():
     """Get authenticated gspread client using service account."""
+    # 1. Try environment variable (for Cloud Deployment)
+    env_creds = os.getenv('SERVICE_ACCOUNT_JSON')
+    if env_creds:
+        try:
+            creds_dict = json.loads(env_creds)
+            creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+            return gspread.authorize(creds)
+        except Exception as e:
+            print(f"Error loading credentials from env: {e}")
+
+    # 2. Fallback to local file (for Local Desktop)
     if not os.path.exists(CREDENTIALS_PATH):
         raise FileNotFoundError(
             "Chưa có file service_account.json trong thư mục credentials/. "
-            "Vui lòng tải file credentials từ Google Cloud Console."
+            "Vui lòng tải file credentials từ Google Cloud Console hoặc cấu hình biến môi trường SERVICE_ACCOUNT_JSON."
         )
     
     creds = Credentials.from_service_account_file(CREDENTIALS_PATH, scopes=SCOPES)
@@ -37,6 +48,13 @@ def get_client():
 
 def get_service_account_email():
     """Get the service account email to display to user."""
+    # Try env first
+    env_creds = os.getenv('SERVICE_ACCOUNT_JSON')
+    if env_creds:
+        try:
+            return json.loads(env_creds).get('client_email')
+        except: pass
+
     if not os.path.exists(CREDENTIALS_PATH):
         return None
     
@@ -443,61 +461,26 @@ def upload_to_drive(file_content, filename, target_folder_url=None, apps_script_
     import base64
     import requests
 
-    # --- Option 1: Use Apps Script Proxy (Recommended for Personal Accounts) ---
+    # --- Option 1: Use Apps Script Proxy ---
     if apps_script_url:
         try:
             folder_id = extract_folder_id(target_folder_url)
             if not folder_id:
                 raise Exception("Không tìm thấy Folder ID từ link Drive.")
-                
-            if '/dev' in apps_script_url:
-                raise Exception("Bạn đang dùng link '/dev'. Vui lòng Deploy bản 'New Deployment' và lấy link kết thúc bằng '/exec'.")
-
+            
             payload = {
                 "filename": filename,
                 "folderId": folder_id,
                 "base64": base64.b64encode(file_content).decode('utf-8')
             }
             
-            # Use specific headers to help Apps Script return raw JSON
-            headers = {
-                "Accept": "application/json",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
+            resp = requests.post(apps_script_url, json=payload, allow_redirects=True)
+            result = resp.json()
             
-            resp = requests.post(apps_script_url, json=payload, headers=headers, allow_redirects=True)
-            
-            try:
-                # Try to clean response if it has garbage
-                text = resp.text.strip()
-                if text.startswith('<!DOCTYPE'):
-                    # It's HTML, search for JSON inside if it's there
-                    json_match = re.search(r'({.*success.*url.*})', text)
-                    if json_match:
-                        result = json.loads(json_match.group(1))
-                    else:
-                        raise ValueError("HTML Response")
-                else:
-                    result = resp.json()
-                
-                if result.get('success'):
-                    return result.get('url').replace('\\/', '/')
-                else:
-                    raise Exception(result.get('message', 'Lỗi Apps Script.'))
-            except Exception:
-                # Fallback: Try to find a drive URL pattern in the text if it's not JSON
-                import re
-                # Improved regex to handle escaped slashes (\/) and capture full URL
-                url_match = re.search(r'https?://drive\.google\.com/[^\s"\'<>]+', resp.text.replace('\\/', '/'))
-                if url_match:
-                    return url_match.group(0).rstrip('.,')
-                    
-                # If still not found, check for login page
-                if "Google Accounts" in resp.text or "login" in resp.text.lower():
-                    raise Exception("Apps Script yêu cầu đăng nhập. Hãy Deploy lại bản 'New Version' và chọn 'Anyone'.")
-                
-                snippet = resp.text[:100] + "..." if len(resp.text) > 100 else resp.text
-                raise Exception(f"Apps Script không trả về link ảnh (Mã {resp.status_code}). Phản hồi: {snippet}")
+            if result.get('success'):
+                return result.get('url')
+            else:
+                raise Exception(result.get('message', 'Lỗi Apps Script.'))
         except Exception as e:
             raise Exception(f"Lỗi qua Apps Script: {str(e)}")
 
@@ -530,56 +513,17 @@ def upload_to_drive(file_content, filename, target_folder_url=None, apps_script_
     # 2. Upload file
     file_metadata = {'name': filename, 'parents': [folder_id]}
     media = MediaIoBaseUpload(io.BytesIO(file_content), mimetype='image/jpeg', resumable=True)
-    file = service.files().create(
-        body=file_metadata, 
-        media_body=media, 
-        fields='id',
-        supportsAllDrives=True
-    ).execute()
+    file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
     file_id = file.get('id')
 
     # 3. Make public
     service.permissions().create(
         fileId=file_id,
-        body={'type': 'anyone', 'role': 'reader'},
-        supportsAllDrives=True
+        body={'type': 'anyone', 'role': 'reader'}
     ).execute()
 
     return f'https://drive.google.com/uc?export=view&id={file_id}'
 
-
-def update_row_with_frames(spreadsheet_id, tab_name, data):
-    """
-    Appends a new row to the sheet with product info and frame images.
-    Format: Link | Giá | Ảnh SP | Frame 1 | Frame 2 | Frame 3
-    """
-    try:
-        client = get_client()
-        spreadsheet = client.open_by_key(spreadsheet_id)
-        worksheet = spreadsheet.worksheet(tab_name)
-
-        img = lambda url: f'=IMAGE("{url}")' if url else ''
-        
-        # Structure matching the extension's logic:
-        # B=Link, D=Giá, E=Ảnh SP, F=Frame1, G=Frame2, H=Frame3
-        # In this tool, we'll just append to the end of the sheet or specific columns if defined.
-        # For simplicity, we'll follow a standard row: [Link, Price, Thumb, F1, F2, F3]
-        
-        row_values = [
-            data.get('video_url', ''),
-            data.get('price', ''),
-            img(data.get('thumbnail_url', '')),
-            img(data.get('frame_urls', [None])[0]),
-            img(data.get('frame_urls', [None, None])[1]),
-            img(data.get('frame_urls', [None, None, None])[2]),
-            datetime.now().strftime('%d/%m/%Y %H:%M')
-        ]
-        
-        worksheet.append_row(row_values, value_input_option='USER_ENTERED')
-        return True
-    except Exception as e:
-        print(f"Error appending row with frames: {e}")
-        return False
 
 def append_link(spreadsheet_id, tab_name, link, link_col, status_col, status="Chưa xử lý"):
     """Append a new link to the sheet."""

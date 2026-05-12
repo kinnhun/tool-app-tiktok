@@ -299,6 +299,62 @@ def api_quick_add_scrape():
         return jsonify({'success': False, 'message': f'Lỗi hệ thống: {str(e)}'})
 
 
+@app.route('/api/webhook/process-row', methods=['POST'])
+def api_webhook_process_row():
+    """Webhook for Google Apps Script to trigger immediate scraping of a single row."""
+    data = request.json
+    spreadsheet_id = data.get('spreadsheet_id')
+    tab_name = data.get('tab_name')
+    row_index = data.get('row_index')
+    url = data.get('url', '').strip()
+    
+    if not all([spreadsheet_id, tab_name, row_index, url]):
+        return jsonify({'success': False, 'message': 'Thiếu thông tin.'}), 400
+        
+    # Find a configuration that matches this spreadsheet and tab to get the column mapping
+    from scraper.sheet_manager import load_configs
+    configs = load_configs()
+    matching_cfg = None
+    for cfg in configs:
+        if cfg.get('spreadsheet_id') == spreadsheet_id and cfg.get('tab_name') == tab_name:
+            matching_cfg = cfg
+            break
+            
+    if not matching_cfg:
+        # If no config found, we use defaults but it's better to return error
+        return jsonify({'success': False, 'message': 'Sheet này chưa được kết nối trong tool.'}), 404
+    
+    def _run_single_scrape():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(scrape_tiktok_product(url))
+            
+            column_mapping = {
+                'status_col': matching_cfg.get('status_col', 'C'),
+                'product_name_col': matching_cfg.get('product_name_col', 'D'),
+                'current_price_col': matching_cfg.get('current_price_col', 'E'),
+                'original_price_col': matching_cfg.get('original_price_col', 'F'),
+                'sale_price_col': matching_cfg.get('sale_price_col', 'G'),
+                'product_link_col': matching_cfg.get('product_link_col', 'H'),
+                'shop_name_col': matching_cfg.get('shop_name_col', 'I'),
+                'updated_at_col': matching_cfg.get('updated_at_col', 'J'),
+                'note_col': matching_cfg.get('note_col', 'K'),
+            }
+            
+            update_row(spreadsheet_id, tab_name, row_index, result, column_mapping)
+        except Exception as e:
+            print(f"Webhook error: {e}")
+        finally:
+            loop.close()
+
+    # Run in background thread to respond quickly to Apps Script
+    import threading
+    threading.Thread(target=_run_single_scrape).start()
+    
+    return jsonify({'success': True, 'message': 'Đã tiếp nhận yêu cầu xử lý.'})
+
+
 @app.route('/api/open-tiktok-app', methods=['POST'])
 def api_open_tiktok_app():
     """Launch TikTok in a standalone mobile-sized window (App Mode) optimized."""
@@ -550,10 +606,6 @@ def api_tiktok_app_action():
                     page = None
                     max_retries = 5
                     
-                    # FOOLPROOF Page Selection
-                    page = None
-                    max_retries = 5
-                    
                     for attempt in range(max_retries):
                         all_pages = []
                         for ctx in browser.contexts:
@@ -589,10 +641,10 @@ def api_tiktok_app_action():
                         await asyncio.sleep(0.8)
                     
                     if not page:
-                        return jsonify({
+                        return {
                             'success': False, 
-                            'message': f'Không tìm thấy trang TikTok. Đang thấy: {[p.url for p in all_pages]}'
-                        })
+                            'message': f'Không tìm thấy trang TikTok.'
+                        }
 
                     # Ensure the page is focused and has a valid size
                     try:
@@ -636,7 +688,6 @@ def api_tiktok_app_action():
                 except Exception as e:
                     return {'success': False, 'message': f'Không thể kết nối tới TikTok App: {str(e)}'}
                 finally:
-                    # Don't close the browser, just the CDP connection
                     pass
 
         result = asyncio.run(run_action())
@@ -740,14 +791,14 @@ def _run_scraper_thread(config_id, config):
         }
         
         # Read links from sheet
-        links_result = read_tiktok_links(spreadsheet_id, tab_name, link_col, status_col)
+        read_result = read_tiktok_links(spreadsheet_id, tab_name, link_col, status_col)
         
-        if not links_result['success']:
+        if not read_result['success']:
             job['running'] = False
-            job['log'].append(f'❌ Lỗi đọc sheet: {links_result.get("message", "")}')
+            job['log'].append(f'❌ Lỗi đọc sheet: {read_result.get("message", "")}')
             return
         
-        links = links_result['links']
+        links = read_result['links']
         job['total'] = len(links)
         
         if not links:
@@ -759,7 +810,7 @@ def _run_scraper_thread(config_id, config):
         
         from concurrent.futures import ThreadPoolExecutor
         
-        job['log'].append(f'🚀 Bắt đầu xử lý song song (Concurrency=5)...')
+        job['log'].append(f'🚀 Bắt đầu xử lý song song (Concurrency=2)...')
         
         def process_link_task(item):
             if not job['running']:
@@ -838,7 +889,6 @@ def check_dependencies():
         print("🔍 Đang kiểm tra tài nguyên hệ thống (Chạy ngầm)...")
         try:
             # Check if chromium already exists to avoid redundant install check
-            # Default playwright path: %LOCALAPPDATA%\ms-playwright
             appdata = os.getenv('LOCALAPPDATA', '')
             if appdata:
                 pw_dir = os.path.join(appdata, 'ms-playwright')
@@ -850,10 +900,10 @@ def check_dependencies():
                     return
 
             print("   (Đang kiểm tra trình duyệt Chromium, vui lòng đợi...)")
-            # Run playwright install for chromium with a 60s timeout
-            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], 
+            # Run playwright install for chromium with dependencies and a longer timeout
+            subprocess.run([sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"], 
                            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, 
-                           timeout=60)
+                           timeout=300)
             
             with open(flag_file, "w") as f:
                 f.write("checked")
@@ -887,7 +937,8 @@ if __name__ == '__main__':
     
     print("=" * 60)
     print("  TikTok Shop Price Scraper")
-    print("  Open browser: http://localhost:5000")
+    port = int(os.environ.get('PORT', 5000))
+    print(f"  Server running on: http://0.0.0.0:{port}")
     print("=" * 60)
     
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=False)
