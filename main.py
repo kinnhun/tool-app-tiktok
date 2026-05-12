@@ -722,14 +722,18 @@ def api_test_scrape():
 def api_login_tiktok():
     """Start interactive login session."""
     try:
+        data = request.json or {}
+        url = data.get('url')
+        
         from scraper.tiktok_scraper import login_tiktok_sync
-        success = login_tiktok_sync()
+        success = login_tiktok_sync(url=url)
+        
         if success:
-            return jsonify({'success': True, 'message': 'Đăng nhập thành công và đã lưu phiên.'})
+            return jsonify({'success': True, 'message': 'Đã cập nhật phiên làm việc.'})
         else:
-            return jsonify({'success': False, 'message': 'Chưa đăng nhập hoặc hết thời gian.'})
+            return jsonify({'success': False, 'message': 'Chưa hoàn tất thao tác hoặc hết thời gian.'})
     except Exception as e:
-        return jsonify({'success': False, 'message': f'Lỗi khởi chạy đăng nhập: {str(e)}'})
+        return jsonify({'success': False, 'message': f'Lỗi khởi chạy: {str(e)}'})
 
 
 @app.route('/api/run/<config_id>', methods=['POST'])

@@ -1011,12 +1011,19 @@ async function testScrape() {
     if (data.success && data.result) {
       const r = data.result;
       const isOk = r.status === 'Thành công';
+      const isCaptcha = r.note && (r.note.includes('CAPTCHA') || r.note.includes('đăng nhập lại'));
 
-      let html = `<div class="alert ${isOk ? 'alert-success' : 'alert-warning'}">
-        <span class="icon">${isOk ? '✅' : '⚠️'}</span>
+      let html = `<div class="alert ${isOk ? 'alert-success' : isCaptcha ? 'alert-danger' : 'alert-warning'}">
+        <span class="icon">${isOk ? '✅' : isCaptcha ? '🛡️' : '⚠️'}</span>
         <div style="display:flex; justify-content:space-between; align-items:center; width:100%">
-          <strong>Trạng thái: ${r.status}</strong>
-          <button class="btn btn-secondary btn-sm" onclick="openTiktokApp('${url}')">📱 Xem trong App Mode</button>
+          <div>
+            <strong>Trạng thái: ${r.status}</strong>
+            ${isCaptcha ? '<div style="font-size:12px;margin-top:4px">Phát hiện CAPTCHA! Hãy bấm nút bên phải để giải.</div>' : ''}
+          </div>
+          <div style="display:flex; gap:8px">
+            ${isCaptcha ? `<button class="btn btn-primary btn-sm" onclick="loginTikTok('${r.product_link || url}')">🧩 Giải CAPTCHA</button>` : ''}
+            <button class="btn btn-secondary btn-sm" onclick="openTiktokApp('${url}')">📱 Xem trong App Mode</button>
+          </div>
         </div>
       </div>`;
 
@@ -1036,6 +1043,14 @@ async function testScrape() {
       html += '</table>';
 
       container.innerHTML = html;
+
+      // Tự động mở trình duyệt để giải CAPTCHA (giới hạn 1 lần mỗi 60s để tránh vòng lặp)
+      const now = Date.now();
+      if (isCaptcha && (!window._lastAutoLogin || (now - window._lastAutoLogin > 60000))) {
+        window._lastAutoLogin = now;
+        showToast('Phát hiện CAPTCHA! Đang tự động mở trình duyệt...', 'warning');
+        setTimeout(() => loginTikTok(r.product_link || url), 1500);
+      }
     } else {
       container.innerHTML = `<div class="alert alert-error"><span class="icon">❌</span>${data.message || 'Không lấy được dữ liệu'}</div>`;
     }
@@ -1049,22 +1064,26 @@ async function testScrape() {
 
 // ─── Login TikTok ───────────────────────────────────────────────
 
-async function loginTikTok() {
+async function loginTikTok(url = null) {
   const btn = document.getElementById('btnLoginTiktok');
+  const originalHtml = btn.innerHTML;
+  
   btn.disabled = true;
-  btn.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block"></div> Đang mở trình duyệt đăng nhập...';
+  btn.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block"></div> Đang mở trình duyệt...';
 
-  showToast('Đang khởi động trình duyệt. Vui lòng đợi...');
+  showToast(url ? 'Đang mở trang bị lỗi CAPTCHA...' : 'Đang khởi động trình duyệt đăng nhập...');
 
   try {
     const res = await fetch(`${API}/api/login-tiktok`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
     });
     const data = await res.json();
 
     if (data.success) {
       showToast(data.message, 'success');
+      if (url) testScrape(); // Re-run test scrape if it was a specific link
     } else {
       showToast(data.message || 'Không thể đăng nhập', 'warning');
     }
@@ -1072,7 +1091,7 @@ async function loginTikTok() {
     showToast('Lỗi kết nối: ' + e.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '🔐 Đăng nhập TikTok (Mở khóa tính năng)';
+    btn.innerHTML = originalHtml;
   }
 }
 

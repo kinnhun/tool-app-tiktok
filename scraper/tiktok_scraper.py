@@ -8,52 +8,158 @@ import asyncio
 import json
 from datetime import datetime
 import os
+import threading
 from urllib.parse import urlparse, unquote
 
 SESSION_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tiktok_session")
+DEFAULT_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 14_8 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1"
 
-async def login_tiktok_async():
+async def login_tiktok_async(url=None):
+    # Close global headless browser if open (to release lock on SESSION_DIR)
+    await close_global_browser()
+    
     from playwright.async_api import async_playwright
     import sys
+    import shutil
     sys.stdout.reconfigure(encoding='utf-8')
-    try:
-        async with async_playwright() as p:
-            context = await p.chromium.launch_persistent_context(
-                user_data_dir=SESSION_DIR,
-                headless=False,
-                args=[
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-blink-features=AutomationControlled',
-                    '--window-size=380,820',
-                    '--app=https://m.tiktok.com/login',
-                    '--no-first-run',
-                    '--no-default-browser-check'
-                ],
-                user_agent='Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
-                viewport={'width': 380, 'height': 820}
-            )
-            page = context.pages[0] if context.pages else await context.new_page()
-            await page.goto("https://www.tiktok.com/login")
-            print("Mở trang đăng nhập TikTok. Đang chờ bạn thao tác...")
-            
-            try:
-                await page.wait_for_url(lambda u: "login" not in u and "passport" not in u, timeout=120000)
-                print("Đăng nhập thành công! Lưu session hoàn tất.")
-                success = True
-            except Exception:
-                print("Đã hết thời gian chờ 2 phút hoặc người dùng đã đóng.")
-                success = False
-            
-            await context.close()
-            return success
-    except Exception as e:
-        print("Lỗi mở trình duyệt login:", e)
-        return False
+    
+    target_url = url if url else "https://www.tiktok.com/login"
+    
+    # Pre-launch cleanup: Remove lock files if they exist
+    lock_files = [
+        os.path.join(SESSION_DIR, "SingletonLock"),
+        os.path.join(SESSION_DIR, "SingletonCookie"),
+        os.path.join(SESSION_DIR, "SingletonSocket")
+    ]
+    for lock in lock_files:
+        try:
+            if os.path.exists(lock):
+                os.remove(lock)
+                print(f"  ℹ️ Đã xóa file lock: {os.path.basename(lock)}")
+        except Exception as e:
+            print(f"  ⚠️ Không thể xóa file lock {os.path.basename(lock)}: {e}")
 
-def login_tiktok_sync():
+    print(f"🚀 Đang khởi chạy trình duyệt để mở: {target_url}...")
+    
+    # Find local Chrome/Edge executable to bypass Google login block
+    executable_path = None
+    import platform
+    if platform.system() == "Windows":
+        chrome_paths = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            os.path.expanduser(r"~\AppData\Local\Google\Chrome\Application\chrome.exe"),
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+        ]
+        for path in chrome_paths:
+            if os.path.exists(path):
+                executable_path = path
+                break
+    
+    with _browser_lock:
+        try:
+            async with async_playwright() as p:
+                try:
+                    launch_kwargs = {
+                        'user_data_dir': SESSION_DIR,
+                        'headless': False,
+                        'args': [
+                            '--disable-blink-features=AutomationControlled',
+                            '--no-sandbox',
+                            '--window-size=375,812'
+                        ],
+                        'ignore_default_args': ['--enable-automation'],
+                        'user_agent': DEFAULT_UA,
+                        'viewport': {'width': 375, 'height': 812},
+                        'is_mobile': True,
+                        'has_touch': True,
+                        'locale': 'vi-VN',
+                        'timezone_id': 'Asia/Ho_Chi_Minh'
+                    }
+                    if executable_path:
+                        launch_kwargs['executable_path'] = executable_path
+                        
+                    context = await p.chromium.launch_persistent_context(**launch_kwargs)
+                except Exception as launch_err:
+                    print(f"❌ Lỗi khởi chạy browser: {launch_err}")
+                    return False
+
+                page = context.pages[0] if context.pages else await context.new_page()
+                
+                try:
+                    from playwright_stealth import stealth_async
+                    await stealth_async(page)
+                except:
+                    pass
+                
+                print(f"🚀 Đang tải trang ({len(target_url)} ký tự)...")
+                try:
+                    await asyncio.sleep(2)
+                    # Try goto first
+                    await page.goto(target_url, timeout=60000)
+                except Exception as nav_err:
+                    print(f"⚠️ Thử cách 2 (window.location): {nav_err}")
+                    try:
+                        await page.evaluate(f"window.location.href = '{target_url}'")
+                    except: pass
+                
+                # Keep open until the user closes the browser or 10 minutes pass
+                success = False
+                print("👀 Đang đợi bạn giải CAPTCHA hoặc đăng nhập...")
+                
+                for i in range(120): # 10 minutes max (120 * 5s)
+                    await asyncio.sleep(5)
+                    try:
+                        if not context.pages or page.is_closed():
+                            print("ℹ️ Trình duyệt đã đóng.")
+                            success = True
+                            break
+                        
+                        current_url = page.url
+                        # If we are on tiktok.com and NOT on a login/captcha page
+                        if "tiktok.com" in current_url and "login" not in current_url and "passport" not in current_url:
+                            # Check if captcha container exists
+                            captcha_selectors = "#captcha_container, .captcha_verify_container, [id^='secsdk'], [class*='captcha']"
+                            captcha_exists = False
+                            
+                            # Check main page
+                            try:
+                                if await page.query_selector(captcha_selectors):
+                                    captcha_exists = True
+                            except: pass
+                            
+                            # Check iframes
+                            if not captcha_exists:
+                                for frame in page.frames:
+                                    try:
+                                        if await frame.query_selector(captcha_selectors):
+                                            captcha_exists = True
+                                            break
+                                    except: pass
+                                    
+                            if not captcha_exists:
+                                print("✨ CAPTCHA đã được giải quyết hoặc không xuất hiện! Đang lưu phiên và đóng trình duyệt...")
+                                await asyncio.sleep(3) # Wait for cookies to settle
+                                success = True
+                                break
+                    except Exception as poll_err:
+                        print(f"ℹ️ Kết thúc: {poll_err}")
+                        success = True
+                        break
+                
+                await context.close()
+                # Clear cookie cache to force reload in next scrape
+                global _cached_cookies, _cookie_cache_time
+                _cached_cookies = None
+                _cookie_cache_time = None
+                return success
+        except Exception as e:
+            print(f"❌ Lỗi nghiêm trọng trong login_tiktok_async: {e}")
+            return False
+
+def login_tiktok_sync(url=None):
     import asyncio
-    return asyncio.run(login_tiktok_async())
+    return asyncio.run(login_tiktok_async(url))
 
 
 def validate_tiktok_url(url):
@@ -83,14 +189,34 @@ def validate_tiktok_url(url):
     return False, "Link không đúng định dạng TikTok."
 
 
-# ─── Cookie Management ────────────────────────────────────────────
+# ─── Persistent Browser Management ───────────────────────────────
 
-import threading
+_global_playwright = None
+# ─── Browser Management ───────────────────────────────────────────
+
+_browser_lock = threading.Lock()
+
+def _cleanup_lock_files():
+    """Remove Playwright/Chromium lock files to prevent startup errors."""
+    try:
+        lock_files = ["SingletonLock", "SingletonCookie", "SingletonSocket"]
+        for f in lock_files:
+            path = os.path.join(SESSION_DIR, f)
+            if os.path.exists(path):
+                try: os.remove(path)
+                except: pass
+    except:
+        pass
+
+async def close_global_browser():
+    """No-op for compatibility."""
+    pass
+
+# ─── Cookie Management ────────────────────────────────────────────
 
 _cached_cookies = None
 _cookie_cache_time = None
 _cookie_lock = threading.Lock()
-_browser_lock = threading.Lock() # Lock for full browser instances to prevent RAM spike
 
 async def _get_session_cookies():
     """Get cookies from Playwright persistent context with thread-safe caching."""
@@ -110,6 +236,7 @@ async def _get_session_cookies():
             if elapsed < 600:
                 return _cached_cookies
     
+    _cleanup_lock_files()
     from playwright.async_api import async_playwright
     
     try:
@@ -118,25 +245,33 @@ async def _get_session_cookies():
                 user_data_dir=SESSION_DIR,
                 headless=True,
                 args=[
+                    '--disable-blink-features=AutomationControlled',
                     '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
                     '--disable-gpu',
+                    '--blink-settings=imagesEnabled=false',
                     '--no-first-run',
-                ]
+                ],
+                user_agent=DEFAULT_UA,
+                viewport={'width': 375, 'height': 812},
+                is_mobile=True,
+                has_touch=True
             )
             cookies = await context.cookies()
             await context.close()
             
             tiktok_cookies = [c for c in cookies if 'tiktok' in c.get('domain', '')]
-            print(f"  → Đọc {len(tiktok_cookies)} cookies từ session")
+            
+            # Check for key session cookies
+            has_session = any(c['name'] == 'sessionid' for c in tiktok_cookies)
+            has_ttwid = any(c['name'] == 'ttwid' for c in tiktok_cookies)
+            
+            print(f"  → Đọc {len(tiktok_cookies)} cookies (SessionID: {'✅' if has_session else '❌'}, TTWID: {'✅' if has_ttwid else '❌'})")
             
             _cached_cookies = tiktok_cookies
             _cookie_cache_time = datetime.now()
             return tiktok_cookies
     except Exception as e:
-        print(f"  ⚠ Lỗi đọc cookies: {e}")
+        print(f"  ⚠ Lỗi đọc cookies từ session: {e}")
         return []
 
 
@@ -149,7 +284,7 @@ def _build_requests_session(cookies):
         session.cookies.set(c['name'], c['value'], domain=c.get('domain', ''))
     
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "User-Agent": DEFAULT_UA,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
         "Referer": "https://www.tiktok.com/",
@@ -577,130 +712,92 @@ async def scrape_tiktok_product(url, playwright_instance=None):
         if not result['product_name'] and video_product_name:
             result['product_name'] = video_product_name
         
-        # Determine status
-        if result['current_price'] or result['sale_price']:
+        # If we got prices, mark as success and skip Playwright entirely
+        if result.get('current_price') or result.get('sale_price'):
             result['status'] = 'Thành công'
-        elif result['product_name']:
-            result['status'] = 'Thiếu giá'
-            if not result['note']:
-                result['note'] = 'Lấy được tên SP nhưng không lấy được giá'
-        else:
-            result['status'] = 'Lỗi'
-            if not result['note']:
-                result['note'] = 'Không lấy được dữ liệu từ trang sản phẩm'
+            result['note'] = ''
+            print(f"  ✅ Đã lấy được giá, bỏ qua CAPTCHA check.")
+            return result
         
-        return result
+        print(f"  → Requests không lấy được giá ({result['note']}), thử Playwright fallback...")
     
-    # ─── Step 3: No PDP URL found → try Playwright for video page ───
-    # Use lock to prevent multiple browser instances from crashing the PC
+    # ─── Step 3: Playwright Fallback (Highly Optimized) ───
     with _browser_lock:
-        print(f"  → Thử mở video bằng Playwright (Lấy browser lock)...")
-        context = None
-        own_playwright = False
-    
-    try:
+        print(f"  ⚡ Đang dùng Playwright ngầm (Siêu tốc)...")
+        _cleanup_lock_files()
+        
         from playwright.async_api import async_playwright
-        
-        if playwright_instance is None:
-            playwright_instance = await async_playwright().start()
-            own_playwright = True
-        
-        context = await playwright_instance.chromium.launch_persistent_context(
-            user_data_dir=SESSION_DIR,
-            headless=True,
-            args=[
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-blink-features=AutomationControlled',
-                '--disable-gpu',
-                '--disable-software-rasterizer',
-                '--no-first-run',
-            ],
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            viewport={'width': 1280, 'height': 720}, # Smaller viewport saves memory
-            locale='vi-VN',
-        )
-        
-        page = context.pages[0] if context.pages else await context.new_page()
-        
-        try:
-            await page.goto(url, wait_until='domcontentloaded', timeout=30000)
-        except Exception as nav_err:
-            result['status'] = 'Lỗi truy cập'
-            result['note'] = f'Không thể mở trang TikTok: {str(nav_err)[:100]}'
-            return result
-        
-        await page.wait_for_timeout(3000)
-        
-        page_content = await page.content()
-        
-        # Check for blocks
-        if 'This account is private' in page_content:
-            result['status'] = 'Lỗi'
-            result['note'] = 'Tài khoản TikTok ở chế độ riêng tư'
-            return result
-        
-        if "Couldn't find this page" in page_content or 'Video is unavailable' in page_content:
-            result['status'] = 'Video bị xóa'
-            result['note'] = 'Video không tồn tại hoặc đã bị xóa'
-            return result
-        
-        if 'Xem video TikTok Shop trong ứng dụng TikTok' in page_content or 'Open TikTok app' in page_content:
-            result['status'] = 'Cần mở App'
-            result['note'] = 'Không hiển thị sản phẩm trên web (Affiliate link cần xem trên App)'
-            
+        async with async_playwright() as p:
+            context = None
             try:
-                title_el = await page.query_selector('[data-e2e="browse-video-desc"]')
-                if title_el:
-                    text = await title_el.inner_text()
-                    if text:
-                        result['product_name'] = f"(Video: {text[:100]}...)"
-            except Exception:
-                pass
-            return result
-        
-        # Look for product links in the video page
-        product_url_found = None
-        try:
-            all_links = await page.query_selector_all('a')
-            for link in all_links:
-                href = await link.get_attribute('href')
-                if href and ('pdp' in href or 'product' in href or 'shop.tiktok' in href):
-                    if not href.startswith('http'):
-                        href = 'https://www.tiktok.com' + href
-                    product_url_found = href
-                    break
-        except Exception:
-            pass
-        
-        if product_url_found:
-            result['product_link'] = product_url_found
-            pdp_details = _extract_pdp_via_requests(product_url_found, session)
-            for key, value in pdp_details.items():
-                if value:
-                    result[key] = value
-            
-            if result['current_price'] or result['sale_price']:
-                result['status'] = 'Thành công'
-            else:
-                result['status'] = 'Thiếu giá'
-        else:
-            result['status'] = 'Cần mở App'
-            result['note'] = 'Không tìm thấy sản phẩm trong video'
-        
-        return result
-        
-    except Exception as e:
-        result['status'] = 'Lỗi cần chạy lại'
-        result['note'] = f'Lỗi scraper: {str(e)[:150]}'
-        return result
-    finally:
-        if context:
-            await context.close()
-        if own_playwright and playwright_instance:
-            await playwright_instance.stop()
+                # Launch with extreme optimization
+                context = await p.chromium.launch_persistent_context(
+                    user_data_dir=SESSION_DIR,
+                    headless=True,
+                    args=[
+                        '--disable-blink-features=AutomationControlled',
+                        '--no-sandbox',
+                        '--disable-gpu',
+                        '--blink-settings=imagesEnabled=false', 
+                        '--disable-dev-shm-usage',
+                        '--no-first-run',
+                    ],
+                    ignore_default_args=['--enable-automation'],
+                    user_agent=DEFAULT_UA,
+                    viewport={'width': 375, 'height': 812},
+                    is_mobile=True,
+                    has_touch=True,
+                    locale='vi-VN',
+                    timezone_id='Asia/Ho_Chi_Minh'
+                )
+                
+                page = await context.new_page()
+                try:
+                    from playwright_stealth import stealth_async
+                    await stealth_async(page)
+                except:
+                    pass
+                # Fast stealth
+                await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                
+                target_url = pdp_url if pdp_url else url
+                print(f"  🔍 Đang quét: {target_url[:60]}...")
+                
+                # Use a smaller timeout for speed
+                await page.goto(target_url, timeout=35000, wait_until='domcontentloaded')
+                await asyncio.sleep(2)
+                
+                page_content = await page.content()
+                
+                if 'Security Check' in page_content or 'captcha' in page_content.lower():
+                    result['note'] = 'Bị CAPTCHA (cần giải lại)'
+                else:
+                    # Parse product links from video if needed
+                    if not pdp_url:
+                        all_links = await page.query_selector_all('a')
+                        for link in all_links:
+                            href = await link.get_attribute('href')
+                            if href and ('pdp' in href or 'product' in href or 'shop.tiktok' in href):
+                                if not href.startswith('http'): href = 'https://www.tiktok.com' + href
+                                pdp_url = href
+                                result['product_link'] = pdp_url
+                                break
+                    
+                    # Final parsing from HTML
+                    result = _parse_prices_from_html(page_content, result)
+                    if result['current_price'] or result['sale_price']:
+                        result['status'] = 'Thành công'
+                        result['note'] = ''
+                    else:
+                        result['status'] = 'Thiếu giá'
 
+            except Exception as e:
+                print(f"  ⚠ Lỗi trình duyệt ngầm: {e}")
+                result['note'] = f'Lỗi hệ thống: {str(e)[:50]}'
+            finally:
+                if context: await context.close()
+            
+            return result
 
 async def process_single_link(url):
     """Process a single TikTok link - convenience wrapper."""
