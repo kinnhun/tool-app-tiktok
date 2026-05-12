@@ -325,10 +325,12 @@ def api_webhook_process_row():
         return jsonify({'success': False, 'message': 'Sheet này chưa được kết nối trong tool.'}), 404
     
     def _run_single_scrape():
+        print(f"🚀 [Webhook] Bắt đầu xử lý link: {url}")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             result = loop.run_until_complete(scrape_tiktok_product(url))
+            print(f"✅ [Webhook] Cào xong: {result.get('product_name', 'N/A')} - {result.get('current_price', 'N/A')}")
             
             column_mapping = {
                 'status_col': matching_cfg.get('status_col', 'C'),
@@ -342,7 +344,9 @@ def api_webhook_process_row():
                 'note_col': matching_cfg.get('note_col', 'K'),
             }
             
+            print(f"📝 [Webhook] Đang ghi kết quả vào dòng {row_index}...")
             update_row(spreadsheet_id, tab_name, row_index, result, column_mapping)
+            print(f"🏁 [Webhook] Hoàn tất xử lý dòng {row_index}!")
         except Exception as e:
             print(f"Webhook error: {e}")
         finally:
@@ -937,7 +941,7 @@ if __name__ == '__main__':
     
     print("=" * 60)
     print("  TikTok Shop Price Scraper")
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 10000))
     print(f"  Server running on: http://0.0.0.0:{port}")
     print("=" * 60)
     
