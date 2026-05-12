@@ -187,6 +187,14 @@ def validate_tiktok_url(url):
         return True, "Link hợp lệ (chưa xác nhận định dạng)"
     
     return False, "Link không đúng định dạng TikTok."
+    
+def _extract_shop_name_from_url(url):
+    """Trích xuất tên shop/username từ URL TikTok."""
+    if not url: return ""
+    # Pattern video: tiktok.com/@username/video/...
+    match = re.search(r'tiktok\.com/@([^/?#]+)', url)
+    if match: return match.group(1)
+    return ""
 
 
 # ─── Persistent Browser Management ───────────────────────────────
@@ -674,6 +682,11 @@ async def scrape_tiktok_product(url, playwright_instance=None):
         return result
     
     url = url.strip()
+    
+    # Pre-extract shop name from URL
+    url_shop_name = _extract_shop_name_from_url(url)
+    if url_shop_name:
+        result['shop_name'] = url_shop_name
     
     # Get session cookies for requests
     cookies = await _get_session_cookies()
