@@ -359,7 +359,7 @@ def update_row(spreadsheet_id, tab_name, row_number, data, column_mapping):
                     start_col_idx = max_idx + 1
                     
                     for i, img_url in enumerate(data['product_images']):
-                        if i >= 5: break # Chỉ lấy tối đa 5 ảnh để tránh lag sheet
+                        # Bỏ giới hạn 5 ảnh để lấy toàn bộ ảnh theo yêu cầu
                         col = idx_to_col(start_col_idx + i)
                         cell = f'{col}{row_number}'
                         # Dùng HYPERLINK + IMAGE với tham số size (mode 4, width 250, height 250)
@@ -376,6 +376,7 @@ def update_row(spreadsheet_id, tab_name, row_number, data, column_mapping):
                     try:
                         sheet_id = worksheet.id
                         max_idx = max(col_to_idx(c) for c in col_letters)
+                        img_count = len(data['product_images'])
                         
                         dim_requests = [
                             {
@@ -396,7 +397,7 @@ def update_row(spreadsheet_id, tab_name, row_number, data, column_mapping):
                                         "sheetId": sheet_id,
                                         "dimension": "COLUMNS",
                                         "startIndex": max_idx,
-                                        "endIndex": max_idx + 5
+                                        "endIndex": max_idx + img_count
                                     },
                                     "properties": {"pixelSize": 250},
                                     "fields": "pixelSize"

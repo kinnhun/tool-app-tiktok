@@ -649,7 +649,7 @@ def _parse_prices_from_html(html, details):
                     # Filter unique and clean them
                     unique_imgs = list(dict.fromkeys(img_matches))
                     cleaned_imgs = [_clean_tiktok_image_url(u) for u in unique_imgs]
-                    details['product_images'] = cleaned_imgs[:10]
+                    details['product_images'] = cleaned_imgs
                     if not details.get('image_url') and cleaned_imgs:
                         details['image_url'] = cleaned_imgs[0]
             else:
