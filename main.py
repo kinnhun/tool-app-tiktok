@@ -360,11 +360,10 @@ def api_webhook_process_row():
     if not all([spreadsheet_id, tab_name, row_index, url]):
         return jsonify({'success': False, 'message': 'Thiếu thông tin.'}), 400
         
-    # Find a configuration that matches this spreadsheet and tab to get the column mapping
-    configs = get_all_configs()
+    # 1. Tìm config khớp chính xác cả ID và Tên tab
+    configs = load_configs()
     matching_cfg = None
     
-    # 1. Tìm config khớp chính xác cả ID và Tên tab
     for cfg in configs:
         if cfg.get('spreadsheet_id') == spreadsheet_id and cfg.get('tab_name') == tab_name:
             matching_cfg = cfg
