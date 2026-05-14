@@ -361,9 +361,10 @@ def update_row(spreadsheet_id, tab_name, row_number, data, column_mapping):
                     for i, img_url in enumerate(data['product_images']):
                         col = idx_to_col(start_col_idx + i)
                         cell = f'{col}{row_number}'
-                        updates.append({'range': cell, 'values': [[img_url]]})
+                        img_val = f'=IMAGE("{img_url}")' if img_url else ''
+                        updates.append({'range': cell, 'values': [[img_val]]})
 
-            worksheet.batch_update(updates)
+            worksheet.batch_update(updates, value_input_option='USER_ENTERED')
         
         return True
     except Exception as e:

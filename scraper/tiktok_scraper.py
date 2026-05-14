@@ -348,7 +348,24 @@ def _extract_pdp_via_requests(product_url, session):
     
     try:
         print(f"  → Đang fetch PDP qua requests: {product_url[:80]}...")
-        resp = session.get(product_url, timeout=15)
+        # Sử dụng User-Agent của ứng dụng TikTok thật để lách CAPTCHA. 
+        # TikTok thường tin tưởng User-Agent từ app của chính mình và trả về nội dung SSR đầy đủ.
+        headers = {
+            "User-Agent": "com.zhiliaoapp.musically/2022405010 (Linux; U; Android 10; en_US; SM-G981B; Build/QP1A.190711.020)",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Cache-Control": "max-age=0",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1"
+        }
+        
+        # Thử sử dụng session sạch không có cookie bị đánh dấu (flagged)
+        import requests
+        clean_session = requests.Session()
+        resp = clean_session.get(product_url, headers=headers, timeout=15)
         
         if resp.status_code != 200:
             details['note'] = f'PDP trả về mã {resp.status_code}'
@@ -394,25 +411,44 @@ def _extract_pdp_via_requests(product_url, session):
         return details
 
 
+def _clean_tiktok_image_url(url):
+    """Xóa các tham số resize/crop của TikTok để lấy ảnh gốc chất lượng cao."""
+    if not url: return ""
+    # TikTok image URL thường có dạng: ...~tplv-obj-resize:100:100.webp
+    # Xóa phần từ dấu ~ đến trước extension hoặc query
+    import re
+    # Pattern tìm phần ~tplv... và thay thế bằng chuỗi rỗng
+    cleaned = re.sub(r'~tplv-[^?]+', '', url)
+    return cleaned
+
 def _parse_router_data(router_data, details):
     """Parse product info from __MODERN_ROUTER_DATA__ JSON."""
     try:
         loader_data = router_data.get('loaderData', {})
         
-        # Find the PDP page data (key varies)
+        # Tìm dữ liệu trang PDP trong loaderData (key có thể thay đổi)
         page_data = None
         for key, value in loader_data.items():
-            if 'pdp' in key and isinstance(value, dict):
+            if not isinstance(value, dict): continue
+            # Kiểm tra xem có chứa component_data hoặc product_info không
+            if 'product' in key.lower() or 'pdp' in key.lower() or 'component_data' in value:
                 page_data = value
                 break
         
         if not page_data:
+            # Fallback: Quét toàn bộ loader_data để tìm product_info
+            for key, value in loader_data.items():
+                if isinstance(value, dict) and 'component_data' in str(value)[:1000]:
+                    page_data = value
+                    break
+        
+        if not page_data:
             return details
         
-        # Extract product info
+        # Trích xuất thông tin sản phẩm
         product_info = page_data.get('component_data', {})
         if not product_info:
-            # Try nested structure
+            # Thử cấu trúc nested trong page_config
             for comp in page_data.get('page_config', {}).get('components_map', []):
                 if comp.get('component_type') == 'product_info':
                     product_info = comp.get('component_data', {})
@@ -422,38 +458,40 @@ def _parse_router_data(router_data, details):
         if not product_model:
             product_model = product_info.get('product_model', {})
         
-        # Product name
+        # Tên sản phẩm
         if product_model.get('name'):
             details['product_name'] = product_model['name']
         
-        # Sold count for reference
-        sold = product_model.get('sold_count', '')
-        
-        # SKUs contain price info
+        # Giá sản phẩm (Ưu tiên lấy từ SKUs)
         skus = product_model.get('skus', [])
+        found_price = False
+        
         if skus:
             for sku in skus:
                 price_info = sku.get('price', {})
                 if price_info:
-                    # TikTok prices are in minor units (cents)
                     sale = price_info.get('sale_price', '')
                     original = price_info.get('original_price', '')
                     
                     if sale:
-                        try:
-                            sale_val = int(sale) / 100 if int(sale) > 100000 else int(sale)
-                            details['sale_price'] = f"₫{sale_val:,.0f}".replace(',', '.')
-                            details['current_price'] = details['sale_price']
-                        except (ValueError, TypeError):
-                            details['sale_price'] = str(sale)
-                    
+                        details['sale_price'] = _format_tiktok_price(sale)
+                        details['current_price'] = details['sale_price']
+                        found_price = True
                     if original:
-                        try:
-                            orig_val = int(original) / 100 if int(original) > 100000 else int(original)
-                            details['original_price'] = f"₫{orig_val:,.0f}".replace(',', '.')
-                        except (ValueError, TypeError):
-                            details['original_price'] = str(original)
-                    break  # Use first SKU
+                        details['original_price'] = _format_tiktok_price(original)
+                    if found_price: break
+        
+        # Nếu không có SKUs, thử lấy từ trường price tổng quát
+        if not found_price:
+            gen_price = product_model.get('price', {})
+            min_p = gen_price.get('min_price')
+            max_p = gen_price.get('max_price')
+            if min_p:
+                details['sale_price'] = _format_tiktok_price(min_p)
+                details['current_price'] = details['sale_price']
+                found_price = True
+            if max_p and max_p != min_p:
+                details['original_price'] = _format_tiktok_price(max_p)
         
         # Seller info
         seller_name = product_model.get('seller_name', '')
@@ -468,19 +506,33 @@ def _parse_router_data(router_data, details):
         if images:
             img_links = []
             for img in images:
-                # Try multiple possible keys for URL list
+                # Thử nhiều key khác nhau cho URL list
                 urls = img.get('url_list', []) or img.get('thumb_url_list', []) or img.get('origin_url_list', [])
                 if urls:
-                    # Clean URL (remove query params if needed, but TikTok images usually work as is)
-                    img_links.append(urls[0])
+                    # Làm sạch URL để lấy ảnh to rõ nét
+                    img_links.append(_clean_tiktok_image_url(urls[0]))
             
             if img_links:
                 details['product_images'] = img_links
-            
+                # Gán luôn ảnh đầu tiên vào image_url để hiển thị chính
+                details['image_url'] = img_links[0]
+        
+        return details
+        
     except Exception as e:
-        print(f"  ⚠ Lỗi parse router data: {e}")
-    
-    return details
+        print(f"  ⚠ Lỗi parse ROUTER_DATA chi tiết: {e}")
+        return details
+
+def _format_tiktok_price(price_str):
+    """Định dạng giá TikTok (thường là đơn vị nhỏ nhất, chia 100 nếu cần)."""
+    try:
+        val = int(price_str)
+        # Nếu giá trị quá lớn (ví dụ 1819200 cho 18.192đ) thì chia 100
+        if val > 1000000 and val % 100 == 0:
+            val = val / 100
+        return f"₫{val:,.0f}".replace(',', '.')
+    except:
+        return str(price_str)
 
 
 def _parse_prices_from_html(html, details):
@@ -588,12 +640,20 @@ def _parse_prices_from_html(html, details):
     
     # Extract product images from HTML if not already found
     if not details.get('product_images'):
-        # Look for image URLs that look like TikTok product images
-        img_matches = re.findall(r'https?://[a-zA-Z0-9.-]+\.ibyteimg\.com/tos-[^"\']+\.(?:jpg|png|webp|jpeg)', html)
-        if img_matches:
-            # Filter unique and likely product images
-            unique_imgs = list(dict.fromkeys(img_matches))
-            details['product_images'] = unique_imgs[:10]
+        # Only extract images if we actually found a product name or price
+        # This prevents picking up random CAPTCHA puzzle images when the page is blocked
+        if details.get('product_name') or details.get('current_price') or details.get('sale_price'):
+            if 'captcha' not in html.lower() and 'security check' not in html.lower():
+                # Look for image URLs that look like TikTok product images
+                img_matches = re.findall(r'https?://[a-zA-Z0-9.-]+\.ibyteimg\.com/tos-[^"\']+\.(?:jpg|png|webp|jpeg)', html)
+                if img_matches:
+                    # Filter unique and likely product images
+                    unique_imgs = list(dict.fromkeys(img_matches))
+                    details['product_images'] = unique_imgs[:10]
+            else:
+                details['product_images'] = []
+        else:
+            details['product_images'] = []
     
     return details
 
@@ -765,25 +825,47 @@ async def scrape_tiktok_product(url, playwright_instance=None):
             context = None
             try:
                 # Launch with extreme optimization
-                context = await p.chromium.launch_persistent_context(
-                    user_data_dir=SESSION_DIR,
-                    headless=True,
-                    args=[
+                import platform
+                import os
+                is_headless_env = os.environ.get("HEADLESS", "false").lower() == "true" or platform.system() != "Windows"
+                
+                # Tìm trình duyệt thật (Chrome/Edge) trên máy để vượt mặt hệ thống chống bot của TikTok
+                executable_path = None
+                if platform.system() == "Windows":
+                    chrome_paths = [
+                        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                        os.path.expanduser(r"~\AppData\Local\Google\Chrome\Application\chrome.exe"),
+                        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+                    ]
+                    for path in chrome_paths:
+                        if os.path.exists(path):
+                            executable_path = path
+                            break
+                            
+                launch_kwargs = {
+                    'user_data_dir': SESSION_DIR,
+                    'headless': is_headless_env if is_headless_env else False,
+                    'args': [
                         '--disable-blink-features=AutomationControlled',
                         '--no-sandbox',
                         '--disable-gpu',
-                        '--blink-settings=imagesEnabled=false', 
                         '--disable-dev-shm-usage',
                         '--no-first-run',
                     ],
-                    ignore_default_args=['--enable-automation'],
-                    user_agent=DEFAULT_UA,
-                    viewport={'width': 375, 'height': 812},
-                    is_mobile=True,
-                    has_touch=True,
-                    locale='vi-VN',
-                    timezone_id='Asia/Ho_Chi_Minh'
-                )
+                    'ignore_default_args': ['--enable-automation'],
+                    'user_agent': DEFAULT_UA,
+                    'viewport': {'width': 375, 'height': 812},
+                    'is_mobile': True,
+                    'has_touch': True,
+                    'locale': 'vi-VN',
+                    'timezone_id': 'Asia/Ho_Chi_Minh'
+                }
+                
+                if executable_path:
+                    launch_kwargs['executable_path'] = executable_path
+                
+                context = await p.chromium.launch_persistent_context(**launch_kwargs)
                 
                 page = await context.new_page()
                 try:
@@ -803,25 +885,39 @@ async def scrape_tiktok_product(url, playwright_instance=None):
                 
                 page_content = await page.content()
                 
-                if 'Security Check' in page_content or 'captcha' in page_content.lower():
-                    result['note'] = 'Bị CAPTCHA (cần giải lại)'
+                # Wait for user to solve CAPTCHA if needed
+                if ('Security Check' in page_content or 'captcha' in page_content.lower()) and not is_headless_env:
+                    print("  ⚠️ TRÌNH DUYỆT ĐÃ BỊ CAPTCHA! Vui lòng tự giải CAPTCHA trên cửa sổ trình duyệt vừa hiện lên...")
+                    for _ in range(45): # Wait up to 90 seconds
+                        await asyncio.sleep(2)
+                        page_content = await page.content()
+                        if 'Security Check' not in page_content and 'captcha' not in page_content.lower():
+                            print("  ✅ Đã vượt qua CAPTCHA! Tiến hành lấy dữ liệu...")
+                            await asyncio.sleep(1)
+                            page_content = await page.content()
+                            break
+                
+                # Parse product links from video if needed
+                if not pdp_url:
+                    all_links = await page.query_selector_all('a')
+                    for link in all_links:
+                        href = await link.get_attribute('href')
+                        if href and ('pdp' in href or 'product' in href or 'shop.tiktok' in href):
+                            if not href.startswith('http'): href = 'https://www.tiktok.com' + href
+                            pdp_url = href
+                            result['product_link'] = pdp_url
+                            break
+                
+                # Final parsing from HTML
+                result = _parse_prices_from_html(page_content, result)
+                
+                if result['current_price'] or result['sale_price']:
+                    result['status'] = 'Thành công'
+                    result['note'] = ''
                 else:
-                    # Parse product links from video if needed
-                    if not pdp_url:
-                        all_links = await page.query_selector_all('a')
-                        for link in all_links:
-                            href = await link.get_attribute('href')
-                            if href and ('pdp' in href or 'product' in href or 'shop.tiktok' in href):
-                                if not href.startswith('http'): href = 'https://www.tiktok.com' + href
-                                pdp_url = href
-                                result['product_link'] = pdp_url
-                                break
-                    
-                    # Final parsing from HTML
-                    result = _parse_prices_from_html(page_content, result)
-                    if result['current_price'] or result['sale_price']:
-                        result['status'] = 'Thành công'
-                        result['note'] = ''
+                    if 'Security Check' in page_content or 'captcha' in page_content.lower():
+                        result['note'] = 'Bị CAPTCHA (Bỏ qua thất bại)'
+                        result['status'] = 'Lỗi'
                     else:
                         result['status'] = 'Thiếu giá'
 
