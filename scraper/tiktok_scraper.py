@@ -41,7 +41,7 @@ async def login_tiktok_async(url=None):
 
     print(f"🚀 Đang khởi chạy trình duyệt để mở: {target_url}...")
     
-    # Find local Chrome/Edge executable to bypass Google login block
+    # Find local Chrome/Edge executable to bypass Google login block (Windows only)
     executable_path = None
     import platform
     if platform.system() == "Windows":
@@ -56,16 +56,20 @@ async def login_tiktok_async(url=None):
                 executable_path = path
                 break
     
+    # In headless environments (like Render/Railway), force headless=True for all
+    is_headless_env = os.environ.get("HEADLESS", "false").lower() == "true" or platform.system() != "Windows"
+    
     with _browser_lock:
         try:
             async with async_playwright() as p:
                 try:
                     launch_kwargs = {
                         'user_data_dir': SESSION_DIR,
-                        'headless': False,
+                        'headless': is_headless_env if is_headless_env else False,
                         'args': [
                             '--disable-blink-features=AutomationControlled',
                             '--no-sandbox',
+                            '--disable-dev-shm-usage',
                             '--window-size=375,812'
                         ],
                         'ignore_default_args': ['--enable-automation'],
@@ -216,6 +220,19 @@ def _cleanup_lock_files():
     except:
         pass
 
+def _cleanup_browser_data():
+    """Dọn dẹp dữ liệu thừa để tiết kiệm dung lượng."""
+    try:
+        # Xóa các thư mục tạm nếu có
+        import shutil
+        for folder in ["Default/Cache", "Default/Code Cache", "Default/GPUCache"]:
+            path = os.path.join(SESSION_DIR, folder)
+            if os.path.exists(path):
+                try: shutil.rmtree(path)
+                except: pass
+        print("  🧹 Đã dọn dẹp bộ nhớ đệm trình duyệt.")
+    except: pass
+
 async def close_global_browser():
     """No-op for compatibility."""
     pass
@@ -277,6 +294,10 @@ async def _get_session_cookies():
             
             _cached_cookies = tiktok_cookies
             _cookie_cache_time = datetime.now()
+            
+            # Dọn dẹp định kỳ sau khi lấy cookie
+            _cleanup_browser_data()
+            
             return tiktok_cookies
     except Exception as e:
         print(f"  ⚠ Lỗi đọc cookies từ session: {e}")

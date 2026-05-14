@@ -12,6 +12,19 @@ import re
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
+import subprocess
+
+def install_playwright():
+    """Tự động cài đặt Playwright browsers nếu chưa có."""
+    try:
+        print("🔍 Đang kiểm tra môi trường Playwright...")
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+        print("✅ Playwright đã sẵn sàng.")
+    except Exception as e:
+        print(f"⚠️ Cảnh báo cài đặt Playwright: {e}")
+
+# Chạy cài đặt khi khởi động
+install_playwright()
 
 def get_resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
@@ -35,6 +48,29 @@ CORS(app)
 # Global state for tracking processing jobs
 processing_jobs = {}
 tiktok_app_process = None
+
+def cleanup_old_jobs():
+    """Xóa bớt dữ liệu lịch sử trong RAM để tránh tốn bộ nhớ."""
+    global processing_jobs
+    if len(processing_jobs) > 50: # Chỉ giữ lại 50 job gần nhất
+        sorted_keys = sorted(processing_jobs.keys(), key=lambda k: processing_jobs[k].get('start_time', ''), reverse=True)
+        keys_to_remove = sorted_keys[50:]
+        for k in keys_to_remove:
+            processing_jobs.pop(k, None)
+        print(f"🧹 Đã dọn dẹp {len(keys_to_remove)} jobs cũ trong RAM.")
+
+def start_periodic_cleanup():
+    """Chạy dọn dẹp định kỳ mỗi 30 phút."""
+    def run_cleanup():
+        import time
+        while True:
+            time.sleep(1800) # 30 phút
+            cleanup_old_jobs()
+    
+    cleanup_thread = threading.Thread(target=run_cleanup, daemon=True)
+    cleanup_thread.start()
+
+start_periodic_cleanup()
 
 
 # ─── Static file serving ───────────────────────────────────────────
@@ -943,11 +979,6 @@ if __name__ == '__main__':
     os.makedirs('credentials', exist_ok=True)
     os.makedirs('static/css', exist_ok=True)
     os.makedirs('static/js', exist_ok=True)
-    
-    print("=" * 60)
-    print("  TikTok Shop Price Scraper")
-    port = int(os.environ.get('PORT', 5000))
-    print(f"  Server running on: http://0.0.0.0:{port}")
-    print("=" * 60)
-    
+    # Lấy PORT từ biến môi trường (cho hosting như Render/Railway)
+    port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
