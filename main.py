@@ -18,7 +18,20 @@ def install_playwright():
     """Tự động cài đặt Playwright browsers nếu chưa có."""
     try:
         print("🔍 Đang kiểm tra môi trường Playwright...")
-        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+        if getattr(sys, 'frozen', False):
+            # Chạy trong môi trường file EXE
+            from playwright._impl.__main__ import main as pw_main
+            original_argv = sys.argv.copy()
+            sys.argv = ['playwright', 'install', 'chromium']
+            try:
+                pw_main()
+            except SystemExit:
+                pass
+            finally:
+                sys.argv = original_argv
+        else:
+            # Chạy bằng script Python
+            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
         print("✅ Playwright đã sẵn sàng.")
     except Exception as e:
         print(f"⚠️ Cảnh báo cài đặt Playwright: {e}")
@@ -358,8 +371,8 @@ def api_webhook_process_row():
             break
             
     if not matching_cfg:
-        # If no config found, we use defaults but it's better to return error
-        return jsonify({'success': False, 'message': 'Sheet này chưa được kết nối trong tool.'}), 404
+        # Trả về mã 200 nhưng ignored=True để báo cho Apps Script biết là bỏ qua tab này
+        return jsonify({'success': False, 'ignored': True, 'message': 'Tab này chưa được setup trong tool, bỏ qua.'}), 200
     
     def _run_single_scrape():
         loop = asyncio.new_event_loop()

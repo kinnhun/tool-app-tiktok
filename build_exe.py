@@ -5,23 +5,18 @@ import sys
 
 def build():
     # 1. Clear previous builds
-    if os.path.exists('dist'):
-        shutil.rmtree('dist')
+    # if os.path.exists('dist'):
+    #     shutil.rmtree('dist')
     if os.path.exists('build'):
         shutil.rmtree('build')
     
     print("--- Bat dau qua trinh build EXE ---")
 
     # 2. PyInstaller arguments
-    # --onefile: single exe
-    # --name: output name
-    # --add-data: include static files
-    # --hidden-import: ensure dependencies are included
-    # We use ; for Windows separator in --add-data
     args = [
         'main.py',
         '--onefile',
-        '--name=TikTokScraper',
+        '--name=TikTokScraper_v2',
         '--add-data=static;static',
         '--hidden-import=playwright',
         '--hidden-import=flask_cors',
