@@ -412,14 +412,14 @@ def _extract_pdp_via_requests(product_url, session):
 
 
 def _clean_tiktok_image_url(url):
-    """Xóa các tham số resize/crop của TikTok để lấy ảnh gốc chất lượng cao."""
+    """Chuyển ảnh TikTok sang JPEG để tương thích với Google Sheet (vì Sheet không hỗ trợ WEBP)."""
     if not url: return ""
-    # TikTok image URL thường có dạng: ...~tplv-obj-resize:100:100.webp
-    # Xóa phần từ dấu ~ đến trước extension hoặc query
     import re
-    # Pattern tìm phần ~tplv... và thay thế bằng chuỗi rỗng
-    cleaned = re.sub(r'~tplv-[^?]+', '', url)
-    return cleaned
+    # Xóa các query parameter (?...)
+    url = url.split('?')[0]
+    # Đổi định dạng từ .webp sang .jpeg để Google Sheet có thể hiển thị
+    url = re.sub(r'\.webp$', '.jpeg', url, flags=re.IGNORECASE)
+    return url
 
 def _parse_router_data(router_data, details):
     """Parse product info from __MODERN_ROUTER_DATA__ JSON."""
@@ -641,15 +641,17 @@ def _parse_prices_from_html(html, details):
     # Extract product images from HTML if not already found
     if not details.get('product_images'):
         # Only extract images if we actually found a product name or price
-        # This prevents picking up random CAPTCHA puzzle images when the page is blocked
         if details.get('product_name') or details.get('current_price') or details.get('sale_price'):
             if 'captcha' not in html.lower() and 'security check' not in html.lower():
                 # Look for image URLs that look like TikTok product images
                 img_matches = re.findall(r'https?://[a-zA-Z0-9.-]+\.ibyteimg\.com/tos-[^"\']+\.(?:jpg|png|webp|jpeg)', html)
                 if img_matches:
-                    # Filter unique and likely product images
+                    # Filter unique and clean them
                     unique_imgs = list(dict.fromkeys(img_matches))
-                    details['product_images'] = unique_imgs[:10]
+                    cleaned_imgs = [_clean_tiktok_image_url(u) for u in unique_imgs]
+                    details['product_images'] = cleaned_imgs[:10]
+                    if not details.get('image_url') and cleaned_imgs:
+                        details['image_url'] = cleaned_imgs[0]
             else:
                 details['product_images'] = []
         else:

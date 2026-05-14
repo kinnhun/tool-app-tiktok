@@ -359,12 +359,53 @@ def update_row(spreadsheet_id, tab_name, row_number, data, column_mapping):
                     start_col_idx = max_idx + 1
                     
                     for i, img_url in enumerate(data['product_images']):
+                        if i >= 5: break # Chỉ lấy tối đa 5 ảnh để tránh lag sheet
                         col = idx_to_col(start_col_idx + i)
                         cell = f'{col}{row_number}'
-                        img_val = f'=IMAGE("{img_url}")' if img_url else ''
+                        # Dùng HYPERLINK + IMAGE với tham số size (mode 4, width 250, height 250)
+                        # Dùng dấu chấm phẩy ; cho Google Sheet tiếng Việt
+                        safe_url = img_url.strip().replace('"', '""')
+                        img_val = f'=HYPERLINK("{safe_url}"; IMAGE("{safe_url}"; 4; 250; 250))' if img_url else ''
                         updates.append({'range': cell, 'values': [[img_val]]})
 
-            worksheet.batch_update(updates, value_input_option='USER_ENTERED')
+            if updates:
+                worksheet.batch_update(updates, value_input_option='USER_ENTERED')
+                
+                # Tự động dãn dòng và cột bằng API gốc của Google Sheets (tránh lỗi attribute)
+                if 'product_images' in data and data['product_images']:
+                    try:
+                        sheet_id = worksheet.id
+                        max_idx = max(col_to_idx(c) for c in col_letters)
+                        
+                        dim_requests = [
+                            {
+                                "updateDimensionProperties": {
+                                    "range": {
+                                        "sheetId": sheet_id,
+                                        "dimension": "ROWS",
+                                        "startIndex": row_number - 1,
+                                        "endIndex": row_number
+                                    },
+                                    "properties": {"pixelSize": 250},
+                                    "fields": "pixelSize"
+                                }
+                            },
+                            {
+                                "updateDimensionProperties": {
+                                    "range": {
+                                        "sheetId": sheet_id,
+                                        "dimension": "COLUMNS",
+                                        "startIndex": max_idx,
+                                        "endIndex": max_idx + 5
+                                    },
+                                    "properties": {"pixelSize": 250},
+                                    "fields": "pixelSize"
+                                }
+                            }
+                        ]
+                        spreadsheet.batch_update({"requests": dim_requests})
+                    except Exception as e:
+                        print(f"Format error: {e}")
         
         return True
     except Exception as e:
