@@ -16,7 +16,7 @@ tiktok_view_session/
 
 # Build/Dist
 build/
-*.spec
+.spec
 buildAppExe/
 buildAppExe.rar
 

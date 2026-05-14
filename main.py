@@ -364,15 +364,32 @@ def api_webhook_process_row():
     configs = get_all_configs()
     matching_cfg = None
     
-    # Chỉ tìm config khớp chính xác cả ID và Tên tab
+    # 1. Tìm config khớp chính xác cả ID và Tên tab
     for cfg in configs:
         if cfg.get('spreadsheet_id') == spreadsheet_id and cfg.get('tab_name') == tab_name:
             matching_cfg = cfg
             break
             
+    # 2. Nếu không có cấu hình riêng cho tab này, tự động ăn theo cấu hình của tab khác cùng file
     if not matching_cfg:
-        # Trả về mã 200 nhưng ignored=True để báo cho Apps Script biết là bỏ qua tab này
-        return jsonify({'success': False, 'ignored': True, 'message': 'Tab này chưa được setup trong tool, bỏ qua.'}), 200
+        for cfg in configs:
+            if cfg.get('spreadsheet_id') == spreadsheet_id:
+                matching_cfg = cfg
+                break
+                
+    # 3. Nếu vẫn không có, dùng cấu hình mặc định tuyệt đối
+    if not matching_cfg:
+        matching_cfg = {
+            'status_col': 'C',
+            'product_name_col': 'D',
+            'current_price_col': 'E',
+            'original_price_col': 'F',
+            'sale_price_col': 'G',
+            'product_link_col': 'H',
+            'shop_name_col': 'I',
+            'updated_at_col': 'J',
+            'note_col': 'K'
+        }
     
     def _run_single_scrape():
         loop = asyncio.new_event_loop()

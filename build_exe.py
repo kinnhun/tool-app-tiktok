@@ -16,7 +16,7 @@ def build():
     args = [
         'main.py',
         '--onefile',
-        '--name=TikTokScraper_v2',
+        '--name=TikTokScraper_v3',
         '--add-data=static;static',
         '--hidden-import=playwright',
         '--hidden-import=flask_cors',

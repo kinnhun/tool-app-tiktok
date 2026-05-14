@@ -2,13 +2,14 @@
   "configurations": [
     {
       "name": "testttt",
-      "sheet_url": "https://docs.google.com/spreadsheets/d/1BJdHWz9xQ5RM_OyLI6gPxr8ETxCTL5Og_exzfdPt00I/edit?gid=0#gid=0",
+      "sheet_url": "https://docs.google.com/spreadsheets/d/1BJdHWz9xQ5RM_OyLI6gPxr8ETxCTL5Og_exzfdPt00I/edit?gid=771433496#gid=771433496",
       "spreadsheet_id": "1BJdHWz9xQ5RM_OyLI6gPxr8ETxCTL5Og_exzfdPt00I",
-      "title": "Bảng tính không có tiêu đề",
+      "title": "lay link tiktok",
       "tabs": [
-        "Trang tính1"
+        "Trang tính3",
+        "Trang tính4"
       ],
-      "tab_name": "Trang tính1",
+      "tab_name": "Trang tính3",
       "link_col": "B",
       "status_col": "C",
       "product_name_col": "D",
@@ -19,10 +20,10 @@
       "shop_name_col": "I",
       "updated_at_col": "J",
       "note_col": "K",
-      "id": "20260511162517",
-      "created_at": "2026-05-11T16:25:17.744025",
+      "id": "20260514200157",
+      "created_at": "2026-05-14T20:01:57.898878",
       "status": "Đã kết nối",
-      "last_run": "2026-05-14T15:21:55.733031"
+      "last_run": "2026-05-14T20:02:13.390967"
     }
   ]
 }
