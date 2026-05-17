@@ -1,6 +1,0 @@
-2026/05/11-15:55:26.994 3128 Reusing MANIFEST D:\tool tiltol\tiktok_session_edge\Default\EdgeCoupons/coupons_data.db/MANIFEST-000001
-2026/05/11-15:55:26.996 3128 Recovering log #4
-2026/05/11-15:55:26.996 3128 Reusing old log D:\tool tiltol\tiktok_session_edge\Default\EdgeCoupons/coupons_data.db/000004.log 
-2026/05/11-15:55:27.633 3c34 Level-0 table #8: started
-2026/05/11-15:55:27.637 3c34 Level-0 table #8: 682327 bytes OK
-2026/05/11-15:55:27.638 3c34 Delete type=0 #4

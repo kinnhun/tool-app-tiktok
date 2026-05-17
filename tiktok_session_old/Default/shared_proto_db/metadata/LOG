@@ -1,4 +1,0 @@
-2026/05/12-16:35:03.129 4df0 Reusing MANIFEST d:\tool-app-tiktok\tiktok_session\Default\shared_proto_db\metadata/MANIFEST-000001
-2026/05/12-16:35:03.129 4df0 Recovering log #3
-2026/05/12-16:35:03.129 4df0 (ignoring error) d:\tool-app-tiktok\tiktok_session\Default\shared_proto_db\metadata/000003.log: dropping 755 bytes; Corruption: checksum mismatch
-2026/05/12-16:35:03.130 4df0 Reusing old log d:\tool-app-tiktok\tiktok_session\Default\shared_proto_db\metadata/000003.log 

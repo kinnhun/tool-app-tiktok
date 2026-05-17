@@ -1,5 +1,0 @@
-2026/05/11-15:44:39.752 3bcc Creating DB D:\tool tiltol\tiktok_session_edge\Default\EdgeCoupons/coupons_data.db since it was missing.
-2026/05/11-15:44:39.757 3bcc Reusing MANIFEST D:\tool tiltol\tiktok_session_edge\Default\EdgeCoupons/coupons_data.db/MANIFEST-000001
-2026/05/11-15:44:41.039 585c Level-0 table #5: started
-2026/05/11-15:44:41.043 585c Level-0 table #5: 682145 bytes OK
-2026/05/11-15:44:41.044 585c Delete type=0 #3
