@@ -189,21 +189,23 @@ def process_account_sync(config):
         return
 
     if is_first_run:
-        # Lần đầu chạy đồng bộ: Không đẩy video cũ vào Sheet, chỉ lưu vào bộ nhớ cache (seen_links)
+        # Lần đầu chạy đồng bộ: Lấy 10 video mới nhất đẩy lên Sheet, các video cũ hơn chỉ lưu vào cache
         try:
             os.makedirs(session_dir, exist_ok=True)
             with open(seen_links_file, 'w', encoding='utf-8') as f:
                 json.dump(recent_links, f)
-            add_sync_log(f"Tài khoản {profile_name}: Khởi tạo lần đầu, đã lưu {len(recent_links)} video cũ (không đẩy lên Sheet).")
+                
+            new_links_to_push = recent_links[:10]
+            add_sync_log(f"Tài khoản {profile_name}: Khởi tạo lần đầu, sẽ đồng bộ {len(new_links_to_push)} video mới nhất.")
         except Exception as e:
             add_sync_log(f"Lỗi khi lưu cache cho {profile_name}: {str(e)}")
-        return
-
-    # Lọc ra các video thực sự mới (chưa có trong cache)
-    new_links_to_push = []
-    for link in recent_links:
-        if link not in seen_links:
-            new_links_to_push.append(link)
+            return
+    else:
+        # Lọc ra các video thực sự mới (chưa có trong cache)
+        new_links_to_push = []
+        for link in recent_links:
+            if link not in seen_links:
+                new_links_to_push.append(link)
 
     if not new_links_to_push:
         add_sync_log(f"Tài khoản {profile_name}: Không tìm thấy video yêu thích nào mới.")

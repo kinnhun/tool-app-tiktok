@@ -44,26 +44,58 @@ function renderSyncConfigs() {
     list.innerHTML = html;
 }
 
-async function loginMultiAccount() {
-    const profileName = document.getElementById('syncProfileName').value.trim();
-    if (!profileName) {
-        alert("Vui lòng nhập tên tài khoản trước khi đăng nhập!");
-        return;
-    }
+let loginPollInterval = null;
+
+async function pollLoginStatus(profileName, sheetConfigId, resultDiv) {
+    if (loginPollInterval) clearInterval(loginPollInterval);
     
-    document.getElementById('syncAddResult').innerHTML = "Đang khởi động trình duyệt... Vui lòng đợi.";
-    
-    try {
-        const res = await fetch('/api/login-multi', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ profile_name: profileName })
-        });
-        const data = await res.json();
-        document.getElementById('syncAddResult').innerHTML = data.message;
-    } catch (e) {
-        document.getElementById('syncAddResult').innerHTML = "Lỗi kết nối server.";
-    }
+    loginPollInterval = setInterval(async () => {
+        try {
+            const res = await fetch(`/api/login-multi-status?profile_name=${encodeURIComponent(profileName)}`);
+            const data = await res.json();
+            
+            if (data.success) {
+                let html = `<span style="color:var(--accent)">⏳ ${data.message}</span>`;
+                
+                if (data.qr_b64) {
+                    html += `<div style="text-align: center;"><img src="data:image/jpeg;base64,${data.qr_b64}" style="width: 250px; height: 250px; object-fit: contain; border-radius: 8px; margin-top: 10px; border: 2px solid var(--border-color); background: white; padding: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);"></div>`;
+                }
+                
+                resultDiv.innerHTML = html;
+                
+                if (data.status === 'success') {
+                    clearInterval(loginPollInterval);
+                    resultDiv.innerHTML = `<span style="color:var(--accent)">⏳ Bước 3: Đăng nhập thành công! Đang lưu cấu hình...</span>`;
+                    
+                    if (sheetConfigId) {
+                        const existing = syncConfigs.find(c => c.profile_name === profileName);
+                        if (existing) {
+                            existing.sheet_config_id = sheetConfigId;
+                            existing.active = true;
+                        } else {
+                            syncConfigs.push({
+                                profile_name: profileName,
+                                sheet_config_id: sheetConfigId,
+                                active: true
+                            });
+                        }
+                        
+                        await saveSyncConfigs();
+                        resultDiv.innerHTML = `<span style="color:var(--success)">✅ Hoàn tất! Đang tiến hành lấy dữ liệu Yêu thích... Bạn có thể xem Log bên dưới.</span>`;
+                        loadSyncConfigs();
+                        
+                        // Kích hoạt đồng bộ ngay lập tức
+                        forceSyncNow();
+                    }
+                } else if (data.status === 'timeout' || data.status === 'error' || data.status === 'not_found') {
+                    clearInterval(loginPollInterval);
+                    resultDiv.innerHTML = `<span style="color:var(--error)">❌ Quá trình đăng nhập kết thúc (${data.status}). Vui lòng thử lại.</span>`;
+                }
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }, 2000);
 }
 
 async function resetMultiAccount() {
@@ -108,9 +140,9 @@ async function connectAndSync() {
             body: JSON.stringify({ profile_name: profileName })
         });
 
-        resultDiv.innerHTML = `<span style="color:var(--accent)">⏳ Bước 2: Đang mở trình duyệt đăng nhập... (Vui lòng đăng nhập trong cửa sổ mới)</span>`;
+        resultDiv.innerHTML = `<span style="color:var(--accent)">⏳ Bước 2: Đang mở trình duyệt nền... Vui lòng chờ để lấy mã QR.</span>`;
         
-        // 2. Mở trình duyệt đăng nhập
+        // 2. Bắt đầu luồng đăng nhập nền
         const res = await fetch('/api/login-multi', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -119,24 +151,7 @@ async function connectAndSync() {
         const data = await res.json();
         
         if (data.success) {
-            resultDiv.innerHTML = `<span style="color:var(--accent)">⏳ Bước 3: Đăng nhập thành công! Đang lưu cấu hình...</span>`;
-            
-            // 3. Tự động lưu liên kết
-            const existing = syncConfigs.find(c => c.profile_name === profileName);
-            if (existing) {
-                existing.sheet_config_id = sheetConfigId;
-                existing.active = true;
-            } else {
-                syncConfigs.push({
-                    profile_name: profileName,
-                    sheet_config_id: sheetConfigId,
-                    active: true
-                });
-            }
-            
-            await saveSyncConfigs();
-            resultDiv.innerHTML = `<span style="color:var(--success)">✅ Hoàn tất! Tài khoản ${profileName} đã được kích hoạt đồng bộ.</span>`;
-            loadSyncConfigs();
+            pollLoginStatus(profileName, sheetConfigId, resultDiv);
         } else {
             resultDiv.innerHTML = `<span style="color:var(--error)">❌ Lỗi: ${data.message}</span>`;
         }

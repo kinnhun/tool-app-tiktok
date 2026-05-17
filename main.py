@@ -866,6 +866,8 @@ def api_force_sync():
     threading.Thread(target=favorites_syncer.sync_all_accounts_job).start()
     return jsonify({'success': True, 'message': 'Đã yêu cầu đồng bộ tức thì.'})
 
+login_sessions = {}
+
 @app.route('/api/login-multi', methods=['POST'])
 def api_login_multi():
     profile_name = request.json.get('profile_name')
@@ -880,86 +882,145 @@ def api_login_multi():
     from scraper.favorites_syncer import active_logins
     active_logins.add(profile_name)
     
-    # We use a custom login flow similar to the default one but pointing to this session_dir
+    if profile_name not in login_sessions:
+        login_sessions[profile_name] = {'status': 'running', 'qr_b64': None, 'message': 'Đang khởi động trình duyệt...'}
+    else:
+        login_sessions[profile_name]['status'] = 'running'
+        login_sessions[profile_name]['qr_b64'] = None
+        login_sessions[profile_name]['message'] = 'Đang khởi động trình duyệt...'
+    
     import asyncio
     from playwright.async_api import async_playwright
     
-    async def login():
+    async def login_task():
         try:
             async with async_playwright() as p:
-                executable_path = None
-                import platform
-                if platform.system() == "Windows":
-                    chrome_paths = [
-                        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                        os.path.expanduser(r"~\AppData\Local\Google\Chrome\Application\chrome.exe")
-                    ]
-                    for path in chrome_paths:
-                        if os.path.exists(path):
-                            executable_path = path
-                            break
-                            
                 kwargs = {
                     'user_data_dir': session_dir,
-                    'headless': False,
+                    'headless': False, # Chạy CÓ giao diện để vượt qua tường lửa/chống bot của TikTok
                     'args': [
                         '--disable-blink-features=AutomationControlled',
                         '--no-sandbox',
                         '--disable-dev-shm-usage',
-                        '--window-size=375,812',
-                        '--disable-extensions',
-                        '--no-first-run',
-                        '--no-default-browser-check'
+                        '--window-size=1280,800', # Dùng giao diện Desktop để hiện sẵn QR
+                        '--disable-extensions'
                     ],
-                    # 'user_agent': "Mozilla/5.0 (iPhone; CPU iPhone OS 14_8 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1",
-                    # 'viewport': {'width': 375, 'height': 812},
-                    # 'is_mobile': True,
-                    # 'has_touch': True,
+                    'viewport': {'width': 1280, 'height': 800},
                     'locale': 'vi-VN',
                     'timezone_id': 'Asia/Ho_Chi_Minh'
                 }
-                if executable_path:
-                    kwargs['executable_path'] = executable_path
-                    
+                
                 context = await p.chromium.launch_persistent_context(**kwargs)
                 page = context.pages[0] if context.pages else await context.new_page()
                 
                 try:
                     from playwright_stealth import stealth_async
                     await stealth_async(page)
+                except: pass
+                
+                login_sessions[profile_name]['message'] = 'Đang tải trang đăng nhập TikTok...'
+                await page.goto("https://www.tiktok.com/login", timeout=60000)
+                
+                # Chờ load form đăng nhập
+                await asyncio.sleep(5)
+                
+                # Thử tự động click vào nút "Sử dụng mã QR" nếu TikTok không mở sẵn
+                try:
+                    # Các text có thể xuất hiện
+                    for text in ["Sử dụng mã QR", "Use QR code"]:
+                        btn = page.locator(f'text="{text}"').first
+                        if await btn.count() > 0 and await btn.is_visible():
+                            await btn.click()
+                            await asyncio.sleep(2)
+                            break
+                    
+                    # Hoặc tìm theo thuộc tính
+                    btn2 = page.locator('[href*="/login/qrcode"]').first
+                    if await btn2.count() > 0 and await btn2.is_visible():
+                        await btn2.click()
+                        await asyncio.sleep(2)
                 except:
                     pass
                 
-                await page.goto("https://www.tiktok.com/login", timeout=60000)
+                # Chờ đợi mã QR (canvas) xuất hiện
+                try:
+                    await page.wait_for_selector('canvas', timeout=10000)
+                except:
+                    pass
                 
-                # Wait until browser is closed or success
-                for _ in range(120):
-                    await asyncio.sleep(5)
+                # Chờ người dùng quét mã
+                for _ in range(60): # 60 * 2 = 120s
+                    await asyncio.sleep(2)
                     if not context.pages or page.is_closed():
                         break
+                        
+                    # Cách chắc chắn nhất để biết đã đăng nhập: kiểm tra cookie sessionid
+                    cookies = await context.cookies()
+                    has_session = any(c['name'] == 'sessionid' for c in cookies)
                     
-                    if "tiktok.com" in page.url and "login" not in page.url:
-                        # Logged in
+                    if has_session or ("tiktok.com" in page.url and "login" not in page.url):
+                        login_sessions[profile_name]['status'] = 'success'
+                        login_sessions[profile_name]['message'] = f'Đã đăng nhập thành công cho {profile_name}'
                         print(f"✅ Đã xác nhận đăng nhập thành công cho {profile_name}")
-                        await asyncio.sleep(3)
+                        await asyncio.sleep(2)
                         break
+                        
+                    # Chụp ảnh QR code liên tục (vì mã QR có thể tự làm mới)
+                    try:
+                        import base64
+                        # Chỉ chụp đúng thẻ canvas chứa mã QR
+                        qr_element = page.locator('canvas').first
+                        if await qr_element.count() > 0 and await qr_element.is_visible():
+                            screenshot = await qr_element.screenshot(type='jpeg', quality=100)
+                            b64 = base64.b64encode(screenshot).decode('utf-8')
+                            login_sessions[profile_name]['qr_b64'] = b64
+                            login_sessions[profile_name]['message'] = 'Sử dụng ứng dụng TikTok trên điện thoại để quét mã QR bên dưới'
+                        else:
+                            # Fallback chụp nguyên màn hình (không dùng locator để tránh lỗi Timeout)
+                            screenshot = await page.screenshot(type='jpeg', quality=70)
+                            b64 = base64.b64encode(screenshot).decode('utf-8')
+                            login_sessions[profile_name]['qr_b64'] = b64
+                            login_sessions[profile_name]['message'] = 'Không tìm thấy mã QR. Vui lòng xem màn hình để biết chi tiết.'
+                    except Exception as e:
+                        print("Lỗi chụp QR:", e)
                 
                 await context.close()
-                return True
+                
+                if login_sessions[profile_name]['status'] != 'success':
+                    login_sessions[profile_name]['status'] = 'timeout'
+                    login_sessions[profile_name]['message'] = 'Hết thời gian chờ đăng nhập.'
+                    
         except Exception as e:
             print(f"❌ Lỗi đăng nhập đa tài khoản: {e}")
-            return False
+            login_sessions[profile_name]['status'] = 'error'
+            login_sessions[profile_name]['message'] = f'Lỗi hệ thống: {e}'
         finally:
-            # Xóa đánh dấu sau khi xong
             if profile_name in active_logins:
                 active_logins.remove(profile_name)
 
-    success = asyncio.run(login())
-    if success:
-        return jsonify({'success': True, 'message': f'Đã đăng nhập thành công cho tài khoản: {profile_name}'})
-    else:
-        return jsonify({'success': False, 'message': 'Lỗi hoặc chưa đăng nhập thành công. Đảm bảo bạn đã tắt các cửa sổ trình duyệt khác.'})
+    def _run_in_thread():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(login_task())
+        loop.close()
+
+    import threading
+    threading.Thread(target=_run_in_thread, daemon=True).start()
+    
+    return jsonify({'success': True, 'message': 'Đã khởi chạy luồng đăng nhập.'})
+
+@app.route('/api/login-multi-status', methods=['GET'])
+def api_login_multi_status():
+    profile_name = request.args.get('profile_name')
+    if not profile_name or profile_name not in login_sessions:
+        return jsonify({'success': False, 'status': 'not_found'})
+    
+    return jsonify({
+        'success': True,
+        'status': login_sessions[profile_name]['status'],
+        'qr_b64': login_sessions[profile_name]['qr_b64'],
+        'message': login_sessions[profile_name]['message']
+    })
 
 
 

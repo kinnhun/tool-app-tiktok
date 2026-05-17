@@ -1,2 +1,3 @@
-2026/05/17-19:13:21.395 fdc Creating DB D:\tool-app-tiktok\tiktok_session_testasdasdasd\Default\Extension Rules since it was missing.
-2026/05/17-19:13:21.406 fdc Reusing MANIFEST D:\tool-app-tiktok\tiktok_session_testasdasdasd\Default\Extension Rules/MANIFEST-000001
+2026/05/17-20:29:13.103 3fdc Reusing MANIFEST D:\tool-app-tiktok\tiktok_session_testasdasdasd\Default\Extension Rules/MANIFEST-000001
+2026/05/17-20:29:13.104 3fdc Recovering log #3
+2026/05/17-20:29:13.104 3fdc Reusing old log D:\tool-app-tiktok\tiktok_session_testasdasdasd\Default\Extension Rules/000003.log 
