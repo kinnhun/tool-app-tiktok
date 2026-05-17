@@ -1,0 +1,10 @@
+flask
+flask-cors
+playwright
+playwright-stealth
+requests
+gspread
+google-auth
+python-dotenv
+uvicorn
+gunicorn
