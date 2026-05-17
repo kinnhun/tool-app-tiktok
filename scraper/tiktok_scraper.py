@@ -76,10 +76,10 @@ async def login_tiktok_async(url=None):
                             '--window-size=375,812'
                         ],
                         'ignore_default_args': ['--enable-automation'],
-                        'user_agent': DEFAULT_UA,
-                        'viewport': {'width': 375, 'height': 812},
-                        'is_mobile': True,
-                        'has_touch': True,
+                        # 'user_agent': DEFAULT_UA,
+                        # 'viewport': {'width': 375, 'height': 812},
+                        # 'is_mobile': True,
+                        # 'has_touch': True,
                         'locale': 'vi-VN',
                         'timezone_id': 'Asia/Ho_Chi_Minh'
                     }

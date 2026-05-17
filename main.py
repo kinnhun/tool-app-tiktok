@@ -101,17 +101,17 @@ start_periodic_cleanup()
 
 @app.route('/')
 def index():
-    return send_from_directory('static', 'index.html')
+    return send_from_directory(app.static_folder, 'index.html')
 
 
 @app.route('/css/<path:filename>')
 def serve_css(filename):
-    return send_from_directory('static/css', filename)
+    return send_from_directory(os.path.join(app.static_folder, 'css'), filename)
 
 
 @app.route('/js/<path:filename>')
 def serve_js(filename):
-    return send_from_directory('static/js', filename)
+    return send_from_directory(os.path.join(app.static_folder, 'js'), filename)
 
 
 # ─── API: Service Account Info ─────────────────────────────────────
@@ -359,6 +359,8 @@ def api_quick_add_scrape():
         return jsonify({'success': False, 'message': f'Lỗi hệ thống: {str(e)}'})
 
 
+_direct_scrape_lock = threading.Lock()
+
 def trigger_scrape_directly(spreadsheet_id, tab_name, row_index, url, matching_cfg=None, profile_name=None):
     """Xử lý cào dữ liệu cho 1 link ngay lập tức."""
     import threading
@@ -398,32 +400,33 @@ def trigger_scrape_directly(spreadsheet_id, tab_name, row_index, url, matching_c
     }
 
     def _run():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            from scraper.tiktok_scraper import scrape_tiktok_product
-            from scraper.sheet_manager import update_row
-            
-            # Truyền thêm session_dir để cào đúng nick
-            result = loop.run_until_complete(scrape_tiktok_product(url, custom_session_dir=session_dir))
-            
-            column_mapping = {
-                'status_col': final_cfg.get('status_col', 'C'),
-                'product_name_col': final_cfg.get('product_name_col', 'D'),
-                'current_price_col': final_cfg.get('current_price_col', 'E'),
-                'original_price_col': final_cfg.get('original_price_col', 'F'),
-                'sale_price_col': final_cfg.get('sale_price_col', 'G'),
-                'product_link_col': final_cfg.get('product_link_col', 'H'),
-                'shop_name_col': final_cfg.get('shop_name_col', 'I'),
-                'updated_at_col': final_cfg.get('updated_at_col', 'J'),
-                'note_col': final_cfg.get('note_col', 'K'),
-            }
-            
-            update_row(spreadsheet_id, tab_name, row_index, result, column_mapping)
-        except Exception as e:
-            print(f"Direct scrape error: {e}")
-        finally:
-            loop.close()
+        with _direct_scrape_lock:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                from scraper.tiktok_scraper import scrape_tiktok_product
+                from scraper.sheet_manager import update_row
+                
+                # Truyền thêm session_dir để cào đúng nick
+                result = loop.run_until_complete(scrape_tiktok_product(url, custom_session_dir=session_dir))
+                
+                column_mapping = {
+                    'status_col': final_cfg.get('status_col', 'C'),
+                    'product_name_col': final_cfg.get('product_name_col', 'D'),
+                    'current_price_col': final_cfg.get('current_price_col', 'E'),
+                    'original_price_col': final_cfg.get('original_price_col', 'F'),
+                    'sale_price_col': final_cfg.get('sale_price_col', 'G'),
+                    'product_link_col': final_cfg.get('product_link_col', 'H'),
+                    'shop_name_col': final_cfg.get('shop_name_col', 'I'),
+                    'updated_at_col': final_cfg.get('updated_at_col', 'J'),
+                    'note_col': final_cfg.get('note_col', 'K'),
+                }
+                
+                update_row(spreadsheet_id, tab_name, row_index, result, column_mapping)
+            except Exception as e:
+                print(f"Direct scrape error: {e}")
+            finally:
+                loop.close()
 
     threading.Thread(target=_run).start()
 
@@ -909,11 +912,10 @@ def api_login_multi():
                         '--no-first-run',
                         '--no-default-browser-check'
                     ],
-                    'ignore_default_args': ['--enable-automation'],
-                    'user_agent': "Mozilla/5.0 (iPhone; CPU iPhone OS 14_8 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1",
-                    'viewport': {'width': 375, 'height': 812},
-                    'is_mobile': True,
-                    'has_touch': True,
+                    # 'user_agent': "Mozilla/5.0 (iPhone; CPU iPhone OS 14_8 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1",
+                    # 'viewport': {'width': 375, 'height': 812},
+                    # 'is_mobile': True,
+                    # 'has_touch': True,
                     'locale': 'vi-VN',
                     'timezone_id': 'Asia/Ho_Chi_Minh'
                 }
@@ -1093,7 +1095,7 @@ def _run_scraper_thread(config_id, config):
                 
                 # Scrape the link
                 try:
-                    result = loop.run_until_complete(scrape_tiktok_product(link))
+                    result = loop.run_until_complete(scrape_tiktok_product(url, custom_session_dir=session_dir))
                 except Exception as e:
                     result = {
                         'status': 'Lỗi cần chạy lại',

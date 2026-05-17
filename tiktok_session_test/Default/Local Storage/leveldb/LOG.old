@@ -1,0 +1,14 @@
+2026/05/17-19:33:10.647 46f8 Reusing MANIFEST D:\tool-app-tiktok\tiktok_session_test\Default\Local Storage\leveldb/MANIFEST-000001
+2026/05/17-19:33:10.656 46f8 Recovering log #21
+2026/05/17-19:33:10.656 46f8 Level-0 table #23: started
+2026/05/17-19:33:10.660 46f8 Level-0 table #23: 47680 bytes OK
+2026/05/17-19:33:10.664 46f8 Delete type=0 #21
+2026/05/17-19:33:10.664 5e4 Compacting 4@0 + 1@1 files
+2026/05/17-19:33:10.674 5e4 Generated table #25@0: 81 keys, 347661 bytes
+2026/05/17-19:33:10.674 5e4 Compacted 4@0 + 1@1 files => 347661 bytes
+2026/05/17-19:33:10.675 5e4 compacted to: files[ 0 1 0 0 0 0 0 ]
+2026/05/17-19:33:10.676 5e4 Delete type=2 #12
+2026/05/17-19:33:10.676 5e4 Delete type=2 #14
+2026/05/17-19:33:10.676 5e4 Delete type=2 #17
+2026/05/17-19:33:10.676 5e4 Delete type=2 #20
+2026/05/17-19:33:10.676 5e4 Delete type=2 #23

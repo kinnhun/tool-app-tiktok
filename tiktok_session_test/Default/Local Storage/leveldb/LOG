@@ -1,0 +1,5 @@
+2026/05/17-19:35:44.680 cd4 Reusing MANIFEST D:\tool-app-tiktok\tiktok_session_test\Default\Local Storage\leveldb/MANIFEST-000001
+2026/05/17-19:35:44.686 cd4 Recovering log #24
+2026/05/17-19:35:44.686 cd4 Level-0 table #27: started
+2026/05/17-19:35:44.690 cd4 Level-0 table #27: 49500 bytes OK
+2026/05/17-19:35:44.693 cd4 Delete type=0 #24

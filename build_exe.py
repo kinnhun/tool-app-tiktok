@@ -19,6 +19,8 @@ def build():
         '--name=TikTokScraper_v4',
         '--add-data=static;static',
         '--hidden-import=playwright',
+        '--hidden-import=playwright_stealth',
+        '--hidden-import=requests',
         '--hidden-import=flask_cors',
         '--hidden-import=gspread',
         '--hidden-import=google.oauth2.service_account',
