@@ -4,6 +4,9 @@ import shutil
 import sys
 
 def build():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(script_dir)
+    
     # 1. Clear previous builds
     # if os.path.exists('dist'):
     #     shutil.rmtree('dist')
@@ -16,7 +19,7 @@ def build():
     args = [
         'main.py',
         '--onefile',
-        '--name=TikTokScraper_v5',
+        '--name=TikTokScraper_v6.25',
         '--add-data=static;static',
         '--hidden-import=playwright',
         '--hidden-import=playwright_stealth',
@@ -24,7 +27,10 @@ def build():
         '--hidden-import=flask_cors',
         '--hidden-import=gspread',
         '--hidden-import=google.oauth2.service_account',
+        '--hidden-import=curl_cffi',
         '--collect-all=playwright',
+        '--collect-all=curl_cffi',
+        '--collect-all=playwright_stealth',
     ]
 
     try:

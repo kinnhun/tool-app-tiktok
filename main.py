@@ -9,6 +9,11 @@ import json
 import asyncio
 import threading
 import re
+
+# Ép buộc Playwright luôn luôn sử dụng thư mục AppData/Local làm gốc chứa Chromium (Tương thích hoàn hảo với PyInstaller)
+if getattr(sys, 'frozen', False):
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright")
+
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
@@ -23,26 +28,94 @@ if sys.stdout.encoding != 'utf-8':
         pass
 
 def install_playwright():
-    """Tự động cài đặt Playwright browsers nếu chưa có."""
+    """Tự động cài đặt Playwright Chromium nếu chưa có bằng cách tải trực tiếp từ CDN nếu gọi lệnh thất bại."""
     try:
         print("🔍 Đang kiểm tra môi trường Playwright...")
-        if getattr(sys, 'frozen', False):
-            # Chạy trong môi trường file EXE
-            from playwright._impl.__main__ import main as pw_main
-            original_argv = sys.argv.copy()
-            sys.argv = ['playwright', 'install', 'chromium']
-            try:
-                pw_main()
-            except SystemExit:
-                pass
-            finally:
-                sys.argv = original_argv
+        
+        # Tính toán đường dẫn đích của Chromium
+        local_app_data = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+        if not local_app_data:
+            local_app_data = os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright")
+        
+        chromium_dir = os.path.join(local_app_data, "chromium-1148")
+        chrome_exe = os.path.join(chromium_dir, "chrome-win", "chrome.exe")
+        
+        if os.path.exists(chrome_exe):
+            print("✅ Playwright Chromium đã tồn tại và sẵn sàng.")
+            return
+
+        print("⏳ Không tìm thấy Chromium. Đang thử cài đặt tự động bằng Playwright CLI...")
+        # Thử cài bằng CLI trước
+        try:
+            if getattr(sys, 'frozen', False):
+                from playwright._impl.__main__ import main as pw_main
+                original_argv = sys.argv.copy()
+                sys.argv = ['playwright', 'install', 'chromium']
+                try:
+                    pw_main()
+                except SystemExit:
+                    pass
+                finally:
+                    sys.argv = original_argv
+            else:
+                subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+        except Exception as cli_err:
+            print(f"⚠️ Cài đặt qua Playwright CLI lỗi: {cli_err}")
+            
+        # Kiểm tra lại xem CLI tải thành công chưa
+        if os.path.exists(chrome_exe):
+            print("✅ Playwright Chromium đã được cài đặt thành công qua CLI.")
+            return
+
+        # Nếu CLI thất bại (thường do VPS chặn node.exe trong temp hoặc lỗi mạng), tải trực tiếp bằng Python!
+        print("⚠️ Cài đặt qua CLI thất bại (thường do VPS chặn chạy file exe từ Temp). Bắt đầu tải Chromium trực tiếp bằng Python...")
+        
+        # URL tải Chromium 1148 cho Win64
+        url = "https://playwright.azureedge.net/builds/chromium/1148/chromium-win64.zip"
+        zip_path = os.path.join(local_app_data, "chromium-win64.zip")
+        
+        os.makedirs(local_app_data, exist_ok=True)
+        
+        import urllib.request
+        import zipfile
+        
+        print(f"📥 Đang tải Chromium từ {url}...")
+        # Thực hiện tải file với User-Agent để tránh bị chặn
+        req = urllib.request.Request(
+            url, 
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        )
+        
+        with urllib.request.urlopen(req) as response, open(zip_path, 'wb') as out_file:
+            # Tải file về
+            data = response.read()
+            out_file.write(data)
+            
+        print("📦 Đang giải nén Chromium...")
+        # Giải nén trực tiếp vào thư mục chromium-1148
+        os.makedirs(chromium_dir, exist_ok=True)
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(chromium_dir)
+            
+        # Tạo các file marker để Playwright xác nhận cài đặt thành công
+        with open(os.path.join(chromium_dir, "INSTALLATION_COMPLETE"), "w") as f:
+            f.write("")
+        with open(os.path.join(chromium_dir, "DEPENDENCIES_VALIDATED"), "w") as f:
+            f.write("")
+            
+        # Dọn dẹp file zip sau khi tải xong
+        try:
+            os.remove(zip_path)
+        except:
+            pass
+            
+        if os.path.exists(chrome_exe):
+            print("✅ Đã tải và cài đặt thành công Chromium thủ công bằng Python!")
         else:
-            # Chạy bằng script Python
-            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
-        print("✅ Playwright đã sẵn sàng.")
+            print("❌ Lỗi: Giải nén thành công nhưng không tìm thấy file chrome.exe!")
+            
     except Exception as e:
-        print(f"⚠️ Cảnh báo cài đặt Playwright: {e}")
+        print(f"⚠️ Cài đặt Playwright thất bại: {e}")
 
 # Chạy cài đặt khi khởi động
 install_playwright()
@@ -360,6 +433,24 @@ def api_quick_add_scrape():
 
 
 _direct_scrape_lock = threading.Lock()
+_scrape_rate_limiter = threading.Semaphore(1)  # Chỉ cho 1 luồng cào cùng lúc
+_last_scrape_time = 0  # Thời điểm cào gần nhất
+_MIN_SCRAPE_INTERVAL = 2.0  # Tối thiểu 2 giây giữa 2 lần cào (= tối đa ~43,200 video/ngày)
+
+def _rate_limited_scrape(url, session_dir, loop):
+    """Cào 1 link với rate limiting để tránh bị chặn IP."""
+    import time
+    global _last_scrape_time
+    
+    with _scrape_rate_limiter:
+        elapsed = time.time() - _last_scrape_time
+        if elapsed < _MIN_SCRAPE_INTERVAL:
+            time.sleep(_MIN_SCRAPE_INTERVAL - elapsed)
+        
+        from scraper.tiktok_scraper import scrape_tiktok_product
+        result = loop.run_until_complete(scrape_tiktok_product(url, custom_session_dir=session_dir))
+        _last_scrape_time = time.time()
+        return result
 
 def trigger_scrape_directly(spreadsheet_id, tab_name, row_index, url, matching_cfg=None, profile_name=None):
     """Xử lý cào dữ liệu cho 1 link ngay lập tức."""
@@ -400,33 +491,83 @@ def trigger_scrape_directly(spreadsheet_id, tab_name, row_index, url, matching_c
     }
 
     def _run():
-        with _direct_scrape_lock:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                from scraper.tiktok_scraper import scrape_tiktok_product
-                from scraper.sheet_manager import update_row
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            from scraper.sheet_manager import update_row
+            result = _rate_limited_scrape(url, session_dir, loop)
+            
+            column_mapping = {
+                'status_col': final_cfg.get('status_col', 'C'),
+                'product_name_col': final_cfg.get('product_name_col', 'D'),
+                'current_price_col': final_cfg.get('current_price_col', 'E'),
+                'original_price_col': final_cfg.get('original_price_col', 'F'),
+                'sale_price_col': final_cfg.get('sale_price_col', 'G'),
+                'product_link_col': final_cfg.get('product_link_col', 'H'),
+                'shop_name_col': final_cfg.get('shop_name_col', 'I'),
+                'updated_at_col': final_cfg.get('updated_at_col', 'J'),
+                'note_col': final_cfg.get('note_col', 'K'),
+            }
+            
+            update_row(spreadsheet_id, tab_name, row_index, result, column_mapping)
+        except Exception as e:
+            print(f"Direct scrape error: {e}")
+        finally:
+            loop.close()
+
+    threading.Thread(target=_run).start()
+
+def trigger_scrape_multiple_targets(url, targets, profile_name=None):
+    """Xử lý cào dữ liệu cho 1 link và cập nhật vào nhiều Sheet/Dòng cùng lúc."""
+    import threading
+    import asyncio
+    import os
+    
+    # Xác định folder session
+    session_dir = None
+    if profile_name:
+        session_dir = os.path.join(os.getcwd(), f"tiktok_session_{profile_name}")
+    
+    def _run():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            from scraper.sheet_manager import update_row
+            
+            # Cào dữ liệu CHỈ 1 LẦN cho mỗi link (có rate limiting)
+            result = _rate_limited_scrape(url, session_dir, loop)
+            
+            # Cập nhật kết quả lên TẤT CẢ các sheet yêu cầu
+            for target in targets:
+                sheet_config = target.get('sheet_config', {})
+                spreadsheet_id = sheet_config.get('spreadsheet_id')
+                tab_name = sheet_config.get('tab_name')
+                row_index = target.get('row_index')
                 
-                # Truyền thêm session_dir để cào đúng nick
-                result = loop.run_until_complete(scrape_tiktok_product(url, custom_session_dir=session_dir))
-                
+                if not spreadsheet_id or not tab_name or not row_index:
+                    continue
+                    
                 column_mapping = {
-                    'status_col': final_cfg.get('status_col', 'C'),
-                    'product_name_col': final_cfg.get('product_name_col', 'D'),
-                    'current_price_col': final_cfg.get('current_price_col', 'E'),
-                    'original_price_col': final_cfg.get('original_price_col', 'F'),
-                    'sale_price_col': final_cfg.get('sale_price_col', 'G'),
-                    'product_link_col': final_cfg.get('product_link_col', 'H'),
-                    'shop_name_col': final_cfg.get('shop_name_col', 'I'),
-                    'updated_at_col': final_cfg.get('updated_at_col', 'J'),
-                    'note_col': final_cfg.get('note_col', 'K'),
+                    'status_col': sheet_config.get('status_col', 'C'),
+                    'product_name_col': sheet_config.get('product_name_col', 'D'),
+                    'current_price_col': sheet_config.get('current_price_col', 'E'),
+                    'original_price_col': sheet_config.get('original_price_col', 'F'),
+                    'sale_price_col': sheet_config.get('sale_price_col', 'G'),
+                    'product_link_col': sheet_config.get('product_link_col', 'H'),
+                    'shop_name_col': sheet_config.get('shop_name_col', 'I'),
+                    'updated_at_col': sheet_config.get('updated_at_col', 'J'),
+                    'note_col': sheet_config.get('note_col', 'K'),
                 }
                 
-                update_row(spreadsheet_id, tab_name, row_index, result, column_mapping)
-            except Exception as e:
-                print(f"Direct scrape error: {e}")
-            finally:
-                loop.close()
+                try:
+                    update_row(spreadsheet_id, tab_name, row_index, result, column_mapping)
+                except Exception as sheet_e:
+                    print(f"Error updating sheet {tab_name}: {sheet_e}")
+                    
+        except Exception as e:
+            print(f"Direct multi-scrape error: {e}")
+        finally:
+            loop.close()
 
     threading.Thread(target=_run).start()
 
@@ -878,10 +1019,6 @@ def api_login_multi():
     print(f"🔑 Đang mở trình duyệt đăng nhập cho: {profile_name}")
     print(f"📂 Folder session: {session_dir}")
     
-    # Đánh dấu đang đăng nhập để tránh xung đột với background sync
-    from scraper.favorites_syncer import active_logins
-    active_logins.add(profile_name)
-    
     if profile_name not in login_sessions:
         login_sessions[profile_name] = {'status': 'running', 'qr_b64': None, 'message': 'Đang khởi động trình duyệt...'}
     else:
@@ -893,6 +1030,15 @@ def api_login_multi():
     from playwright.async_api import async_playwright
     
     async def login_task():
+        # Thử acquire khóa, chờ tối đa 5 giây để luồng đồng bộ ngầm (nếu có) nhả ra
+        from scraper.favorites_syncer import get_session_lock
+        lock = get_session_lock(profile_name)
+        if not lock.acquire(timeout=5):
+            login_sessions[profile_name]['status'] = 'error'
+            login_sessions[profile_name]['message'] = 'Thư mục session đang được luồng đồng bộ ngầm sử dụng. Vui lòng chờ vài giây rồi nhấn đăng nhập lại!'
+            print(f"⚠️ Tranh chấp thư mục session cho: {profile_name} (Đang đồng bộ ngầm)")
+            return
+            
         try:
             async with async_playwright() as p:
                 kwargs = {
@@ -914,8 +1060,8 @@ def api_login_multi():
                 page = context.pages[0] if context.pages else await context.new_page()
                 
                 try:
-                    from playwright_stealth import stealth_async
-                    await stealth_async(page)
+                    from playwright_stealth import Stealth
+                    await Stealth().apply_stealth_async(page)
                 except: pass
                 
                 login_sessions[profile_name]['message'] = 'Đang tải trang đăng nhập TikTok...'
@@ -995,8 +1141,7 @@ def api_login_multi():
             login_sessions[profile_name]['status'] = 'error'
             login_sessions[profile_name]['message'] = f'Lỗi hệ thống: {e}'
         finally:
-            if profile_name in active_logins:
-                active_logins.remove(profile_name)
+            lock.release()
 
     def _run_in_thread():
         loop = asyncio.new_event_loop()

@@ -68,9 +68,8 @@ async function pollLoginStatus(profileName, sheetConfigId, resultDiv) {
                     resultDiv.innerHTML = `<span style="color:var(--accent)">⏳ Bước 3: Đăng nhập thành công! Đang lưu cấu hình...</span>`;
                     
                     if (sheetConfigId) {
-                        const existing = syncConfigs.find(c => c.profile_name === profileName);
+                        const existing = syncConfigs.find(c => c.profile_name === profileName && c.sheet_config_id === sheetConfigId);
                         if (existing) {
-                            existing.sheet_config_id = sheetConfigId;
                             existing.active = true;
                         } else {
                             syncConfigs.push({
@@ -126,37 +125,39 @@ async function connectAndSync() {
     const resultDiv = document.getElementById('syncAddResult');
     
     if (!profileName || !sheetConfigId) {
-        alert("Vui lòng nhập tên tài khoản và chọn cấu hình Sheet!");
+        alert("Vui lòng nhập Link Kênh và chọn cấu hình Sheet!");
+        return;
+    }
+    
+    if (!profileName.includes("tiktok.com")) {
+        alert("Link kênh không hợp lệ! Vui lòng nhập link chuẩn (VD: https://www.tiktok.com/@username)");
         return;
     }
     
     try {
-        resultDiv.innerHTML = `<span style="color:var(--accent)">⏳ Bước 1: Đang làm sạch dữ liệu cũ...</span>`;
+        resultDiv.innerHTML = `<span style="color:var(--accent)">⏳ Đang thiết lập cấu hình...</span>`;
         
-        // 1. Tự động Reset để tránh nhầm nick
-        await fetch('/api/login-reset', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ profile_name: profileName })
-        });
-
-        resultDiv.innerHTML = `<span style="color:var(--accent)">⏳ Bước 2: Đang mở trình duyệt nền... Vui lòng chờ để lấy mã QR.</span>`;
-        
-        // 2. Bắt đầu luồng đăng nhập nền
-        const res = await fetch('/api/login-multi', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ profile_name: profileName })
-        });
-        const data = await res.json();
-        
-        if (data.success) {
-            pollLoginStatus(profileName, sheetConfigId, resultDiv);
+        const existing = syncConfigs.find(c => c.profile_name === profileName && c.sheet_config_id === sheetConfigId);
+        if (existing) {
+            existing.active = true;
         } else {
-            resultDiv.innerHTML = `<span style="color:var(--error)">❌ Lỗi: ${data.message}</span>`;
+            syncConfigs.push({
+                profile_name: profileName,
+                sheet_config_id: sheetConfigId,
+                active: true
+            });
         }
+        
+        await saveSyncConfigs();
+        resultDiv.innerHTML = `<span style="color:var(--success)">✅ Hoàn tất! Hệ thống sẽ quét video Đã thích (Liked) tự động mỗi 2 phút.</span>`;
+        loadSyncConfigs();
+        
+        // Kích hoạt đồng bộ ngay lập tức
+        forceSyncNow();
+        
     } catch (e) {
-        resultDiv.innerHTML = `<span style="color:var(--error)">❌ Lỗi kết nối server.</span>`;
+        resultDiv.innerHTML = `<span style="color:var(--error)">❌ Lỗi: ${e.message}</span>`;
+        console.error(e);
     }
 }
 

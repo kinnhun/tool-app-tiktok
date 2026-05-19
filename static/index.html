@@ -306,16 +306,16 @@
       <!-- ── AUTO SYNC FAVORITES ── -->
       <section id="sec-auto-sync" class="section">
         <div class="page-header">
-          <h2>🔄 Tự động đồng bộ Yêu Thích</h2>
-          <p>Tự động lấy video bạn thả tim/yêu thích trên các tài khoản TikTok và điền vào Google Sheet (chạy nền mỗi 2 phút)</p>
+          <h2>🔄 Tự động đồng bộ Video Đã Thích</h2>
+          <p>Tự động lấy video bạn ấn "Đã Thích" trên TikTok (công khai) và điền vào Google Sheet (chạy nền mỗi 2 phút)</p>
         </div>
 
         <div class="card" style="margin-bottom: 20px;">
           <div class="card-title" style="margin-bottom:16px"><span class="icon">➕</span> Thêm liên kết tài khoản</div>
           <div class="form-row">
             <div class="form-group">
-              <label>Tên định danh tài khoản (VD: account_1, acc_chinh)</label>
-              <input type="text" class="form-input" id="syncProfileName" placeholder="Tên viết liền không dấu...">
+              <label>Link Kênh TikTok (VD: https://www.tiktok.com/@hiki_cosmetics)</label>
+              <input type="text" class="form-input" id="syncProfileName" placeholder="Dán link kênh TikTok có danh sách Đã thích công khai...">
             </div>
             <div class="form-group">
               <label>Chọn cấu hình Google Sheet lưu dữ liệu</label>
@@ -323,7 +323,7 @@
             </div>
           </div>
           <div class="btn-group" style="margin-bottom: 12px;">
-            <button class="btn btn-primary btn-lg btn-block" onclick="connectAndSync()">🚀 1. Đăng nhập & Bắt đầu đồng bộ ngay</button>
+            <button class="btn btn-primary btn-lg btn-block" onclick="connectAndSync()">🚀 Bắt đầu đồng bộ ngay</button>
           </div>
           <div id="syncAddResult" style="font-size: 13px; font-weight: 500; min-height: 20px;"></div>
         </div>
