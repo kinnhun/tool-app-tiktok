@@ -1020,10 +1020,10 @@ async function testScrape() {
         <div style="display:flex; justify-content:space-between; align-items:center; width:100%">
           <div>
             <strong>Trạng thái: ${r.status}</strong>
-            ${isCaptcha ? '<div style="font-size:12px;margin-top:4px">Phát hiện CAPTCHA! Hãy bấm nút bên phải để giải.</div>' : ''}
+            ${isCaptcha ? '<div style="font-size:13px;margin-top:6px;color:#d9534f;font-weight:bold;">❌ Phát hiện CAPTCHA (IP Datacenter bị chặn)! BẮT BUỘC bạn phải Đăng Nhập để tool có thể Vượt qua tự động.</div>' : ''}
           </div>
-          <div style="display:flex; gap:8px">
-            ${isCaptcha ? `<button class="btn btn-primary btn-sm" onclick="loginTikTok('${r.product_link || url}')">🧩 Giải CAPTCHA</button>` : ''}
+          <div class="col-auto">
+            ${isCaptcha ? `<button class="btn btn-primary btn-sm" onclick="loginTikTok('${r.product_link || url}')">🔑 Bấm để Đăng Nhập</button>` : ''}
             <button class="btn btn-secondary btn-sm" onclick="openTiktokApp('${url}')">📱 Xem trong App Mode</button>
           </div>
         </div>

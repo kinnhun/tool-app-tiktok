@@ -461,7 +461,7 @@ def trigger_scrape_directly(spreadsheet_id, tab_name, row_index, url, matching_c
     # Xác định folder session
     session_dir = None
     if profile_name:
-        session_dir = os.path.join(os.getcwd(), f"tiktok_session_{profile_name}")
+        session_dir = os.path.join(os.getcwd(), f"tiktok_session_{__import__('re').sub(r'[\\\\/:*?\"<>|]', '_', profile_name)}")
     
     # Nếu không có cấu hình, tìm cấu hình khớp
     if not matching_cfg:
@@ -526,7 +526,7 @@ def trigger_scrape_multiple_targets(url, targets, profile_name=None):
     # Xác định folder session
     session_dir = None
     if profile_name:
-        session_dir = os.path.join(os.getcwd(), f"tiktok_session_{profile_name}")
+        session_dir = os.path.join(os.getcwd(), f"tiktok_session_{__import__('re').sub(r'[\\\\/:*?\"<>|]', '_', profile_name)}")
     
     def _run():
         loop = asyncio.new_event_loop()
@@ -956,7 +956,7 @@ def api_test_scrape():
                 profile_name = sync_configs[0].get('profile_name')
                 if profile_name:
                     import os
-                    session_dir = os.path.join(os.getcwd(), f"tiktok_session_{profile_name}")
+                    session_dir = os.path.join(os.getcwd(), f"tiktok_session_{__import__('re').sub(r'[\\\\/:*?\"<>|]', '_', profile_name)}")
         except Exception:
             pass
             
@@ -1015,7 +1015,7 @@ def api_login_multi():
     if not profile_name:
         return jsonify({'success': False, 'message': 'Thiếu tên tài khoản.'})
         
-    session_dir = os.path.join(os.getcwd(), f"tiktok_session_{profile_name}")
+    session_dir = os.path.join(os.getcwd(), f"tiktok_session_{__import__('re').sub(r'[\\\\/:*?\"<>|]', '_', profile_name)}")
     print(f"🔑 Đang mở trình duyệt đăng nhập cho: {profile_name}")
     print(f"📂 Folder session: {session_dir}")
     
@@ -1176,7 +1176,7 @@ def api_login_reset():
     if not profile_name:
         return jsonify({'success': False, 'message': 'Thiếu tên tài khoản.'})
         
-    session_dir = os.path.join(os.getcwd(), f"tiktok_session_{profile_name}")
+    session_dir = os.path.join(os.getcwd(), f"tiktok_session_{__import__('re').sub(r'[\\\\/:*?\"<>|]', '_', profile_name)}")
     
     try:
         import shutil
@@ -1261,7 +1261,7 @@ def _run_scraper_thread(config_id, config):
         
         session_dir = None
         if profile_name:
-            session_dir = os.path.join(os.getcwd(), f"tiktok_session_{profile_name}")
+            session_dir = os.path.join(os.getcwd(), f"tiktok_session_{__import__('re').sub(r'[\\\\/:*?\"<>|]', '_', profile_name)}")
             job['log'].append(f'🔑 Sử dụng session của nick: {profile_name}')
         
         # Read links from sheet

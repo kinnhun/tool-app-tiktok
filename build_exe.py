@@ -19,10 +19,12 @@ def build():
     args = [
         'main.py',
         '--onefile',
-        '--name=TikTokScraper_v6.25',
+        '--name=TikTokScraper_v6.34',
         '--add-data=static;static',
+        '--collect-all=playwright_stealth',
         '--hidden-import=playwright',
         '--hidden-import=playwright_stealth',
+        '--hidden-import=cloakbrowser',
         '--hidden-import=requests',
         '--hidden-import=flask_cors',
         '--hidden-import=gspread',
@@ -30,7 +32,7 @@ def build():
         '--hidden-import=curl_cffi',
         '--collect-all=playwright',
         '--collect-all=curl_cffi',
-        '--collect-all=playwright_stealth',
+        '--collect-all=cloakbrowser',
     ]
 
     try:
