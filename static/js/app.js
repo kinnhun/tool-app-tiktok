@@ -1034,6 +1034,12 @@ async function testScrape() {
           <img src="${r.image_url}" style="max-width:100%; max-height:200px; border-radius:8px; border:1px solid rgba(255,255,255,0.1)">
         </div>`;
       }
+      if (r.qr_b64) {
+        html += `<div style="margin-bottom:15px; text-align:center">
+          <p style="font-weight:bold; color:var(--accent); margin-bottom: 8px;">Quét mã QR dưới đây bằng ứng dụng TikTok:</p>
+          <img src="data:image/jpeg;base64,${r.qr_b64}" style="max-width:100%; width: 250px; height: 250px; object-fit: contain; border-radius:8px; border: 2px solid var(--border-color); background: white; padding: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+        </div>`;
+      }
 
       html += '<table class="sample-table">';
       const fields = [
@@ -1079,7 +1085,7 @@ async function testScrape() {
   }
 }
 
-// ─── Login TikTok ───────────────────────────────────────────────
+let loginTikTokPollInterval = null;
 
 async function loginTikTok(url = null) {
   const btn = document.getElementById('btnLoginTiktok');
@@ -1100,13 +1106,65 @@ async function loginTikTok(url = null) {
 
     if (data.success) {
       showToast(data.message, 'success');
-      if (url) testScrape(); // Re-run test scrape if it was a specific link
+      
+      // Bắt đầu polling trạng thái và QR code
+      if (loginTikTokPollInterval) clearInterval(loginTikTokPollInterval);
+      
+      const container = document.getElementById('testResult');
+      container.innerHTML = `<div class="alert alert-info" id="tiktokLoginStatus">
+        <div class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block"></div> 
+        <span>Đang chờ trình duyệt khởi động...</span>
+        <div id="tiktokLoginQrContainer" style="margin-top: 15px; text-align: center; display: none;"></div>
+      </div>`;
+      
+      loginTikTokPollInterval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`${API}/api/login-tiktok-status`);
+          const statusData = await statusRes.json();
+          
+          if (statusData.success) {
+            const statusEl = document.querySelector('#tiktokLoginStatus span');
+            if (statusEl) statusEl.textContent = statusData.message || 'Đang xử lý...';
+            
+            // Hiển thị QR code nếu có
+            const qrContainer = document.getElementById('tiktokLoginQrContainer');
+            if (qrContainer && statusData.qr_b64) {
+              qrContainer.style.display = 'block';
+              qrContainer.innerHTML = `
+                <img src="data:image/jpeg;base64,${statusData.qr_b64}" 
+                     style="max-width:100%; width: 200px; height: 200px; object-fit: contain; border-radius:8px; border: 2px solid var(--border-color); background: white; padding: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+                <div style="margin-top: 10px; font-weight: bold; color: var(--accent);">Vui lòng dùng app TikTok quét mã này</div>
+              `;
+            }
+            
+            // Dừng polling khi kết thúc (thành công, lỗi, hoặc timeout)
+            if (statusData.status === 'success' || statusData.status === 'error' || statusData.status === 'timeout' || statusData.status === 'stopped') {
+              clearInterval(loginTikTokPollInterval);
+              btn.disabled = false;
+              btn.innerHTML = originalHtml;
+              
+              if (statusData.status === 'success') {
+                showToast('Đăng nhập hoàn tất!', 'success');
+                container.innerHTML = `<div class="alert alert-success"><span class="icon">✅</span>${statusData.message}</div>`;
+                if (url) setTimeout(() => testScrape(), 1000); // Re-run test scrape
+              } else {
+                showToast(statusData.message || 'Lỗi đăng nhập', 'error');
+                container.innerHTML = `<div class="alert alert-error"><span class="icon">❌</span>${statusData.message}</div>`;
+              }
+            }
+          }
+        } catch (pollErr) {
+          console.error("Lỗi poll status:", pollErr);
+        }
+      }, 3000); // Poll mỗi 3 giây
+      
     } else {
       showToast(data.message || 'Không thể đăng nhập', 'warning');
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
     }
   } catch (e) {
     showToast('Lỗi kết nối: ' + e.message, 'error');
-  } finally {
     btn.disabled = false;
     btn.innerHTML = originalHtml;
   }

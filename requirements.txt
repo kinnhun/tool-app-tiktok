@@ -8,3 +8,5 @@ google-auth
 python-dotenv
 uvicorn
 gunicorn
+opencv-python-headless
+numpy

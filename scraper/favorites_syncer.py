@@ -172,12 +172,27 @@ async def extract_favorites(session_dir, seen_links=None, target_url=None):
             add_sync_log(f"Đang truy cập kênh: {profile_url}")
             await page.goto(profile_url, timeout=60000, wait_until="domcontentloaded")
             
-            # BYPASS CAPTCHA LẶP LẠI ĐẾN KHI THÀNH CÔNG
+            # BYPASS CAPTCHA BẰNG AI SOLVER
             for bypass_attempt in range(5):
                 await asyncio.sleep(3)
-                if await page.locator("#captcha-verify-image").count() > 0 or await page.locator(".captcha_verify_container").count() > 0:
-                    add_sync_log(f"⚠️ Phát hiện Captcha (Lần {bypass_attempt+1})! Đang chọc và tự động tải lại trang để vượt qua...")
-                    await page.reload(wait_until="domcontentloaded")
+                from scraper.captcha_solver import detect_captcha
+                captcha_type, _ = await detect_captcha(page)
+                has_captcha = captcha_type is not None
+                
+                if has_captcha:
+                    add_sync_log(f"⚠️ Phát hiện CAPTCHA (Lần {bypass_attempt+1}, loại: {captcha_type})! Đang dùng AI Solver...")
+                    try:
+                        from scraper.captcha_solver import solve_captcha_with_retry
+                        solved = await solve_captcha_with_retry(page, max_retries=2)
+                        if solved:
+                            add_sync_log("✅ Đã vượt CAPTCHA thành công!")
+                            break
+                        else:
+                            add_sync_log("⚠️ Solver chưa giải được, thử reload...")
+                            await page.reload(wait_until="domcontentloaded")
+                    except Exception as captcha_err:
+                        add_sync_log(f"⚠️ Lỗi solver: {captcha_err}, thử reload...")
+                        await page.reload(wait_until="domcontentloaded")
                 else:
                     break
                     

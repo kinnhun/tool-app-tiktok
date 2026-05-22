@@ -23,7 +23,7 @@ else:
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 SESSION_DIR = os.path.join(BASE_DIR, "tiktok_session")
-DEFAULT_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 14_8 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1"
+DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 def _cleanup_lock_files(session_dir):
     """Xóa các file lock của Chromium để tránh lỗi 'Target page' / 'Profile in use'."""
@@ -39,7 +39,14 @@ def _cleanup_lock_files(session_dir):
         except:
             pass
 
+login_status_dict = {'status': 'stopped', 'qr_b64': None, 'message': ''}
+
 async def login_tiktok_async(url=None):
+    global login_status_dict
+    login_status_dict['status'] = 'running'
+    login_status_dict['qr_b64'] = None
+    login_status_dict['message'] = 'Đang khởi động trình duyệt...'
+    
     # Close global headless browser if open (to release lock on SESSION_DIR)
     await close_global_browser()
     
@@ -48,7 +55,8 @@ async def login_tiktok_async(url=None):
     import shutil
     sys.stdout.reconfigure(encoding='utf-8')
     
-    target_url = url if url else "https://www.tiktok.com/login"
+    # Luôn mở trang login để hiện mã QR to rõ ràng
+    target_url = "https://www.tiktok.com/login"
     
     # Pre-launch cleanup: Remove lock files
     _cleanup_lock_files(SESSION_DIR)
@@ -65,15 +73,20 @@ async def login_tiktok_async(url=None):
                 'args': [
                     '--disable-blink-features=AutomationControlled',
                     '--no-sandbox',
+                    '--disable-gpu',
                     '--disable-dev-shm-usage',
-                    '--window-size=375,812'
+                    '--no-first-run',
+                    '--force-device-scale-factor=1',
+                    '--use-gl=angle',
+                    '--use-gl=swiftshader',
+                    '--window-size=1280,800'
                 ],
                 'locale': 'vi-VN',
                 'timezone_id': 'Asia/Ho_Chi_Minh',
-                'user_agent': DEFAULT_UA,
-                'viewport': {'width': 375, 'height': 812},
-                'is_mobile': True,
-                'has_touch': True,
+                'user_agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                'viewport': {'width': 1280, 'height': 800},
+                'is_mobile': False,
+                'has_touch': False,
                 'humanize': True
             }
             context = await launch_persistent_context_async(user_data_dir=SESSION_DIR, **launch_kwargs)
@@ -92,11 +105,11 @@ async def login_tiktok_async(url=None):
                 await route.continue_()
         await context.route("**/*", block_redirects)
         
-        try:
-            from playwright_stealth import Stealth
-            await Stealth().apply_stealth_async(page)
-        except Exception as se:
-            print(f"⚠️ Lỗi stealth: {se}")
+        # try:
+        #     from playwright_stealth import Stealth
+        #     await Stealth().apply_stealth_async(page)
+        # except Exception as se:
+        #     print(f"⚠️ Lỗi stealth: {se}")
         
         print(f"🚀 Đang tải trang ({len(target_url)} ký tự)...")
         try:
@@ -108,12 +121,20 @@ async def login_tiktok_async(url=None):
             try:
                 await page.evaluate(f"window.location.href = '{target_url}'")
             except: pass
+            
+        # Tự động chọn "Sử dụng mã QR" nếu có
+        try:
+            print("  ⏳ Đang tự động chọn phương thức Đăng nhập bằng QR...")
+            await page.wait_for_selector("text=/Sử dụng mã QR|Use QR code/i", timeout=5000)
+            await page.click("text=/Sử dụng mã QR|Use QR code/i")
+            print("  ✅ Đã mở mã QR! Vui lòng quét...")
+        except Exception as e:
+            print(f"  ℹ️ Không tìm thấy nút mã QR, bạn vui lòng tự chọn trên màn hình.")
         
-        # Keep open until the user closes the browser or 10 minutes pass
+        # Keep open until login completes or 10 minutes pass
         success = False
-        print("👀 Đang đợi bạn giải CAPTCHA hoặc tự động bypass...")
+        print("🤖 Đang tự động xử lý đăng nhập (không cần can thiệp)...")
         
-        captcha_stuck_count = 0
         for i in range(120): # 10 minutes max (120 * 5s)
             await asyncio.sleep(5)
             try:
@@ -145,28 +166,65 @@ async def login_tiktok_async(url=None):
                             except: pass
                             
                     if not captcha_exists:
-                        print("✨ CAPTCHA đã được giải quyết hoặc không xuất hiện! Đang lưu phiên và đóng trình duyệt...")
+                        login_status_dict['status'] = 'success'
+                        login_status_dict['message'] = 'Đăng nhập thành công!'
+                        print("✨ Đăng nhập thành công! Đang lưu phiên...")
                         await asyncio.sleep(3) # Wait for cookies to settle
                         success = True
                         break
                     else:
-                        captcha_stuck_count += 1
-                        if captcha_stuck_count >= 3: # 15 seconds stuck
-                            print("🔄 Kẹt CAPTCHA quá lâu trên VPS, đang thử tải lại trang (reload)...")
+                        # TỰ ĐỘNG GIẢI CAPTCHA - không cần người dùng
+                        print("🔓 Phát hiện CAPTCHA sau đăng nhập, đang tự động giải...")
+                        login_status_dict['message'] = 'Đã đăng nhập! Đang giải CAPTCHA...'
+                        try:
+                            from scraper.captcha_solver import solve_captcha_with_retry
+                            solved = await solve_captcha_with_retry(page, max_retries=3)
+                            if solved:
+                                print("✅ Đã tự động giải CAPTCHA thành công!")
+                                login_status_dict['status'] = 'success'
+                                login_status_dict['message'] = 'Đăng nhập thành công!'
+                                await asyncio.sleep(3)
+                                success = True
+                                break
+                            else:
+                                print("⚠️ Chưa giải được, đang thử reload...")
+                                try:
+                                    await page.reload()
+                                except: pass
+                        except Exception as solver_err:
+                            print(f"⚠️ Lỗi solver: {solver_err}, thử reload...")
                             try:
                                 await page.reload()
                             except: pass
-                            captcha_stuck_count = 0
+                            
+                # Capture QR code if visible
+                try:
+                    import base64
+                    qr_element = page.locator('canvas').first
+                    if await qr_element.count() > 0 and await qr_element.is_visible():
+                        screenshot = await qr_element.screenshot(type='jpeg', quality=100)
+                        b64 = base64.b64encode(screenshot).decode('utf-8')
+                        login_status_dict['qr_b64'] = b64
+                        login_status_dict['message'] = 'Sử dụng ứng dụng TikTok trên điện thoại để quét mã QR bên dưới'
+                except:
+                    pass
+                    
             except Exception as poll_err:
-                    print(f"ℹ️ Kết thúc: {poll_err}")
-                    success = True
-                    break
+                print(f"ℹ️ Kết thúc: {poll_err}")
+                login_status_dict['status'] = 'error'
+                login_status_dict['message'] = f'Lỗi: {poll_err}'
+                success = True
+                break
+                
+        await context.close()
+        if not success and login_status_dict['status'] == 'running':
+            login_status_dict['status'] = 'timeout'
+            login_status_dict['message'] = 'Hết thời gian chờ đăng nhập.'
             
-            await context.close()
-            # Clear cookie cache to force reload in next scrape
-            global _cached_cookies_dict
-            _cached_cookies_dict = {}
-            return success
+        # Clear cookie cache to force reload in next scrape
+        global _cached_cookies_dict
+        _cached_cookies_dict = {}
+        return success
 
 def login_tiktok_sync(url=None):
     import asyncio
@@ -239,11 +297,28 @@ _cached_cookies_dict = {} # dict mapping session_dir to (cookies, time)
 _cookie_lock = threading.Lock()
 
 async def _get_session_cookies(custom_session_dir=None):
-    """Get cookies from Playwright persistent context with thread-safe caching."""
+    """Get cookies from Playwright persistent context with thread-safe caching.
+    Nếu chưa đăng nhập (không có thư mục session), trả về [] để curl_cffi tự hoạt động không cần cookie.
+    """
     global _cached_cookies_dict
     
     # Sử dụng folder được chỉ định hoặc folder mặc định
     target_session_dir = custom_session_dir or SESSION_DIR
+    
+    # Nếu thư mục session chưa tồn tại → chưa đăng nhập → trả về rỗng (không cần mở browser)
+    if not os.path.exists(target_session_dir):
+        print(f"  → Chưa đăng nhập (không có session), dùng curl_cffi không cần cookie...")
+        return []
+    
+    # Kiểm tra có file cookie thực sự không (thư mục rỗng = chưa đăng nhập)
+    has_data = any(
+        f for f in os.listdir(target_session_dir) 
+        if f not in ('SingletonLock', 'SingletonCookie', 'SingletonSocket', '.DS_Store')
+    ) if os.path.isdir(target_session_dir) else False
+    
+    if not has_data:
+        print(f"  → Thư mục session rỗng, dùng curl_cffi không cần cookie...")
+        return []
     
     # Fast path: check cache per session_dir
     if target_session_dir in _cached_cookies_dict:
@@ -268,11 +343,15 @@ async def _get_session_cookies(custom_session_dir=None):
                         '--disable-gpu',
                         '--blink-settings=imagesEnabled=false',
                         '--no-first-run',
+                        '--force-device-scale-factor=1',
+                        '--use-gl=angle',
+                        '--use-gl=swiftshader',
+                        '--window-size=1280,800',
                     ],
                     'user_agent': DEFAULT_UA,
-                    'viewport': {'width': 375, 'height': 812},
-                    'is_mobile': True,
-                    'has_touch': True,
+                    'viewport': {'width': 1280, 'height': 800},
+                    'is_mobile': False,
+                    'has_touch': False,
                     'humanize': True
                 }
                 
@@ -796,11 +875,15 @@ def _parse_prices_from_html(html, details):
     """Parse product info directly from SSR HTML content."""
     
     # Extract product name from <h1> or <title>
-    if not details.get('product_name'):
+    current_name = details.get('product_name', '')
+    is_generic = not current_name or current_name in ['Security Check', 'TikTok Shop Vietnam', 'TikTok Shop Việt Nam', 'TikTok']
+    if is_generic:
         # Try <h1>
         h1_match = re.search(r'<h1[^>]*>\s*<span[^>]*>([^<]+)</span>', html)
         if h1_match:
-            details['product_name'] = h1_match.group(1).strip()
+            name_val = h1_match.group(1).strip()
+            if name_val not in ['Security Check', 'TikTok Shop Vietnam', 'TikTok Shop Việt Nam', 'TikTok']:
+                details['product_name'] = name_val
         else:
             # Try <title>
             title_match = re.search(r'<title[^>]*>([^<]+)</title>', html)
@@ -808,7 +891,8 @@ def _parse_prices_from_html(html, details):
                 title = title_match.group(1).strip()
                 # Remove " - TikTok Shop Vietnam" suffix
                 title = re.sub(r'\s*-\s*TikTok Shop\s*(Vietnam|Việt Nam)?$', '', title)
-                details['product_name'] = title
+                if title not in ['Security Check', 'TikTok Shop Vietnam', 'TikTok Shop Việt Nam', 'TikTok']:
+                    details['product_name'] = title
     
     # ─── Extract prices ───
     # TikTok SSR HTML has prices in specific structures:
@@ -969,10 +1053,12 @@ def _extract_pdp_url_from_video(url):
             return result
         
         u_data = json.loads(matches[0])
-        item_struct = (u_data.get('__DEFAULT_SCOPE__', {})
-                      .get('webapp.reflow.video.detail', {})
-                      .get('itemInfo', {})
-                      .get('itemStruct', {}))
+        video_detail = {}
+        for k, v in u_data.get('__DEFAULT_SCOPE__', {}).items():
+            if 'video-detail' in k.lower() or 'video.detail' in k.lower():
+                video_detail = v
+                break
+        item_struct = video_detail.get('itemInfo', {}).get('itemStruct', {})
         
         anchors = item_struct.get('anchors', [])
         found_products = []
@@ -1127,11 +1213,15 @@ async def scrape_tiktok_product(url, playwright_instance=None, custom_session_di
                     '--disable-gpu',
                     '--disable-dev-shm-usage',
                     '--no-first-run',
+                    '--force-device-scale-factor=1',
+                    '--use-gl=angle',
+                    '--use-gl=swiftshader',
+                    '--window-size=1280,800',
                 ],
                 'user_agent': DEFAULT_UA,
-                'viewport': {'width': 375, 'height': 812},
-                'is_mobile': True,
-                'has_touch': True,
+                'viewport': {'width': 1280, 'height': 800},
+                'is_mobile': False,
+                'has_touch': False,
                 'locale': 'vi-VN',
                 'timezone_id': 'Asia/Ho_Chi_Minh',
                 'humanize': True
@@ -1165,13 +1255,52 @@ async def scrape_tiktok_product(url, playwright_instance=None, custom_session_di
                     await route.continue_()
             await context.route("**/*", block_redirects)
             
-            # Áp dụng Stealth của người đi trước
-            try:
-                from playwright_stealth import Stealth
-                await Stealth().apply_stealth_async(page)
-            except Exception as se:
-                print(f"  ⚠️ Lỗi stealth: {se}")
-            await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            # Áp dụng Stealth (Đã tắt để tránh xung đột với cloakbrowser)
+            # try:
+            #     from playwright_stealth import Stealth
+            #     await Stealth().apply_stealth_async(page)
+            # except Exception as se:
+            #     print(f"  ⚠️ Lỗi stealth: {se}")
+            # Tăng cường chống phát hiện Bot (Đã tắt để tránh xung đột với cloakbrowser)
+            # await page.add_init_script("""
+            #     // Ẩn webdriver flag
+            #     Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            #     // Giả lập Chrome plugins
+            #     Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+            #     // Giả lập Chrome languages
+            #     Object.defineProperty(navigator, 'languages', {get: () => ['vi-VN', 'vi', 'en-US', 'en']});
+            #     // Ẩn automation flags
+            #     delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+            #     delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+            #     delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+            #     // Override permissions query
+            #     const origQuery = window.navigator.permissions.query;
+            #     window.navigator.permissions.query = (params) => (
+            #         params.name === 'notifications' ? 
+            #         Promise.resolve({state: Notification.permission}) : origQuery(params)
+            #     );
+            # """)
+            
+            # ── Bắt API response từ TikTok để lấy product data ──
+            captured_api_data = {}
+            
+            async def _intercept_response(response):
+                """Bắt các API response chứa thông tin sản phẩm."""
+                try:
+                    resp_url = response.url
+                    # Bắt các API endpoint chứa product data
+                    if any(k in resp_url for k in ['product/detail', 'pdp/get_item', 'commerce/product', 'anchor_info']):
+                        if response.status == 200:
+                            try:
+                                data = await response.json()
+                                captured_api_data['product_api'] = data
+                                print(f"  📦 Bắt được API product data từ: {resp_url[:80]}")
+                            except:
+                                pass
+                except:
+                    pass
+            
+            page.on('response', _intercept_response)
             
             target_url = pdp_url if pdp_url else url
             print(f"  🔍 Đang quét: {target_url[:60]}...")
@@ -1185,6 +1314,7 @@ async def scrape_tiktok_product(url, playwright_instance=None, custom_session_di
             # Parse product links from video if needed
             is_on_video_page = not pdp_url
             if is_on_video_page:
+                # Cách 1: Tìm link PDP trong DOM (anchor tags)
                 all_links = await page.query_selector_all('a')
                 for link in all_links:
                     href = await link.get_attribute('href')
@@ -1192,11 +1322,93 @@ async def scrape_tiktok_product(url, playwright_instance=None, custom_session_di
                         if not href.startswith('http'): href = 'https://www.tiktok.com' + href
                         pdp_url = href
                         result['product_link'] = pdp_url
-                        print(f"  → Đã tìm thấy PDP link: {pdp_url[:60]}, đang chuyển hướng...")
-                        await page.goto(pdp_url, timeout=35000, wait_until='domcontentloaded')
-                        await asyncio.sleep(2)
-                        page_content = await page.content()
+                        print(f"  → Đã tìm thấy PDP link (DOM): {pdp_url[:60]}")
                         break
+                
+                 # Cách 2: Tìm link PDP trong __MODERN_ROUTER_DATA__ JSON (API data)
+                if not pdp_url:
+                    try:
+                        router_match_v = re.search(r'id="__MODERN_ROUTER_DATA__"[^>]*>\s*({.+?})\s*</script>', page_content, re.DOTALL)
+                        if router_match_v:
+                            video_json = json.loads(router_match_v.group(1))
+                            # Tìm PDP link trong JSON
+                            def _find_pdp_in_json(obj):
+                                if isinstance(obj, str):
+                                    if '/pdp/' in obj or '/product/' in obj:
+                                        return obj
+                                elif isinstance(obj, dict):
+                                    for v in obj.values():
+                                        r = _find_pdp_in_json(v)
+                                        if r: return r
+                                elif isinstance(obj, list):
+                                    for item in obj:
+                                        r = _find_pdp_in_json(item)
+                                        if r: return r
+                                return None
+                            
+                            found_pdp = _find_pdp_in_json(video_json)
+                            if found_pdp:
+                                if not found_pdp.startswith('http'):
+                                    found_pdp = 'https://www.tiktok.com' + found_pdp
+                                pdp_url = found_pdp
+                                result['product_link'] = pdp_url
+                                print(f"  → Tìm thấy PDP link (JSON): {pdp_url[:60]}")
+                    except:
+                        pass
+                
+                # Cách 3: Kiểm tra API response đã bắt được
+                if not pdp_url and captured_api_data.get('product_api'):
+                    found_pdp = _find_pdp_in_json(captured_api_data['product_api'])
+                    if found_pdp:
+                        if not found_pdp.startswith('http'):
+                            found_pdp = 'https://www.tiktok.com' + found_pdp
+                        pdp_url = found_pdp
+                        result['product_link'] = pdp_url
+                        print(f"  → Tìm thấy PDP link (API): {pdp_url[:60]}")
+                
+                # Cách 4: Đọc __UNIVERSAL_DATA_FOR_REHYDRATION__ (chứa anchors/shop links)
+                if not pdp_url:
+                    try:
+                        uni_match = re.search(r'id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([^<]+)</script>', page_content)
+                        if uni_match:
+                            u_data = json.loads(uni_match.group(1))
+                            video_detail = {}
+                            for k, v in u_data.get('__DEFAULT_SCOPE__', {}).items():
+                                if 'video-detail' in k.lower() or 'video.detail' in k.lower():
+                                    video_detail = v
+                                    break
+                            item_struct = video_detail.get('itemInfo', {}).get('itemStruct', {})
+                            
+                            anchors = item_struct.get('anchors', [])
+                            for anchor in anchors:
+                                if not isinstance(anchor, dict): continue
+                                extra_str = anchor.get('extra', '{}')
+                                try:
+                                    extra_data = json.loads(extra_str)
+                                    items = extra_data if isinstance(extra_data, list) else [extra_data]
+                                    for item in items:
+                                        inner_extra = item
+                                        if isinstance(item.get('extra'), str):
+                                            inner_extra = json.loads(item['extra'])
+                                        seo_url = inner_extra.get('seo_url') or item.get('seo_url')
+                                        if seo_url and ('shop' in seo_url or 'pdp' in seo_url):
+                                            if not seo_url.startswith('http'):
+                                                seo_url = 'https://www.tiktok.com' + seo_url
+                                            pdp_url = seo_url
+                                            result['product_link'] = pdp_url
+                                            print(f"  → Tìm thấy PDP link (REHYDRATION): {pdp_url[:60]}")
+                                            break
+                                except: continue
+                                if pdp_url: break
+                    except:
+                        pass
+                
+                # Navigate sang PDP nếu tìm được
+                if pdp_url:
+                    print(f"  → Đang chuyển hướng sang PDP...")
+                    await page.goto(pdp_url, timeout=35000, wait_until='domcontentloaded')
+                    await asyncio.sleep(3)
+                    page_content = await page.content()
             
             # Try to parse JSON data from PDP page content (API-like)
             if pdp_url:
@@ -1211,6 +1423,8 @@ async def scrape_tiktok_product(url, playwright_instance=None, custom_session_di
                         result = _parse_router_data(router_data, result, target_product_id=product_id)
                         if result.get('current_price'):
                             result['status'] = 'Thành công'
+                            if pdp_url:
+                                result['product_link'] = pdp_url
                             print(f"  ✅ Lấy được giá từ JSON trong Playwright")
                             return result
                     except Exception as e:
@@ -1219,46 +1433,153 @@ async def scrape_tiktok_product(url, playwright_instance=None, custom_session_di
                 # Final parsing from HTML (fallback)
                 result = _parse_prices_from_html(page_content, result)
                 
-                if result['current_price'] or result['sale_price']:
-                    result['status'] = 'Thành công'
-                    result['note'] = ''
-                else:
-                    if 'Security Check' in page_content or 'captcha' in page_content.lower() or await page.query_selector('#captcha_container'):
-                        print("  ⚠️ Gặp CAPTCHA! Tool đang chạy trên VPS, tiến hành TỰ ĐỘNG VƯỢT (Auto-bypass)...")
-                        
-                        bypassed = False
-                        for r_attempt in range(3):
-                            print(f"  🔄 Đang tự động tải lại trang và giả lập thao tác người thật (Lần {r_attempt + 1}/3)...")
-                            await asyncio.sleep(2)
-                            try:
-                                # Dùng goto thay vì reload để tránh crash do stealth init_script
-                                await page.goto(page.url, timeout=35000, wait_until='domcontentloaded')
-                                await asyncio.sleep(3)
-                                
-                                # Mô phỏng hành vi cuộn chuột ngẫu nhiên của người thật
-                                import random
-                                await page.mouse.wheel(0, random.randint(300, 700))
-                                await asyncio.sleep(1)
-                                await page.mouse.wheel(0, -random.randint(100, 300))
+            if (result.get('current_price') or result.get('sale_price')) and (pdp_url or not is_on_video_page):
+                result['status'] = 'Thành công'
+                result['note'] = ''
+                if pdp_url and not result.get('product_link'):
+                    result['product_link'] = pdp_url
+            else:
+                is_login_page = "login" in target_url.lower() or "passport" in target_url.lower()
+                if is_login_page or "Đăng nhập" in page_content or "Log in" in page_content:
+                    print("  ⚠️ Bị yêu cầu Đăng nhập! Đang cố gắng lấy mã QR...")
+                    try:
+                        for text in ["Sử dụng mã QR", "Use QR code"]:
+                            btn = page.locator(f'text="{text}"').first
+                            if await btn.count() > 0 and await btn.is_visible():
+                                await btn.click()
                                 await asyncio.sleep(2)
-                                
-                                new_content = await page.content()
-                                if 'Security Check' not in new_content and not await page.query_selector('#captcha_container'):
-                                    print("  ✅ Tự động vượt CAPTCHA thành công!")
-                                    # Lấy lại giá sau khi vượt
-                                    result = _parse_prices_from_html(new_content, result)
-                                    if result['current_price'] or result['sale_price']:
-                                        result['status'] = 'Thành công'
-                                        result['note'] = ''
-                                        bypassed = True
-                                        break
-                            except Exception as bypass_e:
-                                print(f"  ⚠️ Lỗi trong lúc auto-bypass: {bypass_e}")
-                                
-                        if not bypassed:
-                            print("  ❌ Auto-bypass thất bại ở lần cào này. Sẽ tự động thử lại ở chu kỳ tiếp theo.")
-                            result['note'] = 'Bị CAPTCHA (Đang tự động thử lại)'
-                            result['status'] = 'Lỗi'
+                                break
+                        
+                        btn2 = page.locator('[href*="/login/qrcode"]').first
+                        if await btn2.count() > 0 and await btn2.is_visible():
+                            await btn2.click()
+                            await asyncio.sleep(2)
+                            
+                        qr_canvas = page.locator('canvas').first
+                        if await qr_canvas.count() > 0 and await qr_canvas.is_visible():
+                            import base64
+                            screenshot = await qr_canvas.screenshot(type='jpeg', quality=100)
+                            result['qr_b64'] = base64.b64encode(screenshot).decode('utf-8')
+                            result['note'] = 'Bị chặn đăng nhập. Vui lòng quét QR (Xem ảnh)'
+                            result['status'] = 'Cần đăng nhập'
+                    except Exception as e:
+                        print(f"Lỗi xử lý QR đăng nhập: {e}")
+                        
+                if not result.get('qr_b64') and ('Security Check' in page_content or 'captcha' in page_content.lower() or await page.query_selector('#captcha_container')):
+                    print("  ⚠️ Gặp CAPTCHA! Đang dùng AI Solver để tự động vượt qua...")
+                    
+                    from scraper.captcha_solver import solve_captcha_with_retry
+                    bypassed = await solve_captcha_with_retry(page, max_retries=3)
+                    
+                    if bypassed:
+                        print("  ✅ Tự động vượt CAPTCHA thành công!")
+                        await asyncio.sleep(3)
+                        
+                        # Sau CAPTCHA, trang có thể redirect về đúng trang cần xem
+                        current_url = page.url
+                        
+                        # Nếu đang ở video page → tìm link PDP
+                        if '/video/' in current_url and not pdp_url:
+                            print("  🔍 Đang tìm lại link sản phẩm sau CAPTCHA...")
+                            all_links2 = await page.query_selector_all('a')
+                            for link2 in all_links2:
+                                href2 = await link2.get_attribute('href')
+                                if href2 and ('pdp' in href2 or 'product' in href2 or 'shop.tiktok' in href2):
+                                    if not href2.startswith('http'): href2 = 'https://www.tiktok.com' + href2
+                                    pdp_url = href2
+                                    result['product_link'] = pdp_url
+                                    print(f"  → Tìm lại PDP: {pdp_url[:60]}")
+                                    break
+                        
+                        # Cách 2 (post-CAPTCHA): Tìm PDP trong __UNIVERSAL_DATA_FOR_REHYDRATION__
+                        if not pdp_url:
+                            try:
+                                post_captcha_content = await page.content()
+                                uni_match2 = re.search(r'id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([^<]+)</script>', post_captcha_content)
+                                if uni_match2:
+                                    u_data2 = json.loads(uni_match2.group(1))
+                                    video_detail2 = {}
+                                    for k, v in u_data2.get('__DEFAULT_SCOPE__', {}).items():
+                                        if 'video-detail' in k.lower() or 'video.detail' in k.lower():
+                                            video_detail2 = v
+                                            break
+                                    item_struct2 = video_detail2.get('itemInfo', {}).get('itemStruct', {})
+                                    for anchor2 in item_struct2.get('anchors', []):
+                                        if not isinstance(anchor2, dict): continue
+                                        try:
+                                            extra2 = json.loads(anchor2.get('extra', '{}'))
+                                            items2 = extra2 if isinstance(extra2, list) else [extra2]
+                                            for it2 in items2:
+                                                inner2 = it2
+                                                if isinstance(it2.get('extra'), str):
+                                                    inner2 = json.loads(it2['extra'])
+                                                seo2 = inner2.get('seo_url') or it2.get('seo_url')
+                                                if seo2 and ('shop' in seo2 or 'pdp' in seo2):
+                                                    if not seo2.startswith('http'):
+                                                        seo2 = 'https://www.tiktok.com' + seo2
+                                                    pdp_url = seo2
+                                                    result['product_link'] = pdp_url
+                                                    print(f"  → Tìm thấy PDP (REHYDRATION post-CAPTCHA): {pdp_url[:60]}")
+                                                    break
+                                        except: continue
+                                        if pdp_url: break
+                            except:
+                                pass
+                        
+                        # Nếu có PDP URL → navigate sang trang sản phẩm
+                        if pdp_url:
+                            result['product_link'] = pdp_url
+                            
+                            # Chỉ navigate nếu chưa ở trang PDP
+                            if '/pdp/' not in current_url and '/product/' not in current_url:
+                                print(f"  🔄 Đang chuyển sang trang sản phẩm: {pdp_url[:60]}...")
+                                try:
+                                    await page.goto(pdp_url, timeout=35000, wait_until='domcontentloaded')
+                                    await asyncio.sleep(3)
+                                    
+                                    # Kiểm tra CAPTCHA trên trang PDP
+                                    pdp_content = await page.content()
+                                    if 'captcha' in pdp_content.lower() or 'Security Check' in pdp_content:
+                                        print("  ⚠️ PDP cũng bị CAPTCHA, đang giải...")
+                                        await solve_captcha_with_retry(page, max_retries=2)
+                                        await asyncio.sleep(2)
+                                except Exception as nav_err:
+                                    print(f"  ⚠️ Lỗi navigate PDP: {nav_err}")
+                        
+                        # Lấy nội dung cuối cùng
+                        new_content = await page.content()
+                        
+                        # Thử parse JSON trước
+                        router_match2 = re.search(r'id="__MODERN_ROUTER_DATA__"[^>]*>\s*({.+?})\s*</script>', new_content, re.DOTALL)
+                        if router_match2:
+                            try:
+                                router_data2 = json.loads(router_match2.group(1))
+                                product_id2 = ""
+                                id_match2 = re.search(r'/(\d+)(?:\?|$)', pdp_url or url)
+                                if id_match2: product_id2 = id_match2.group(1)
+                                result = _parse_router_data(router_data2, result, target_product_id=product_id2)
+                            except:
+                                pass
+                        
+                        # Fallback: parse HTML
+                        result = _parse_prices_from_html(new_content, result)
+                        
+                        # Đảm bảo product_link luôn có giá trị
+                        if pdp_url and not result.get('product_link'):
+                            result['product_link'] = pdp_url
+                        
+                        if result.get('current_price') or result.get('sale_price'):
+                            result['status'] = 'Thành công'
+                            if 'Lỗi' in result.get('note', '') or 'Không tìm thấy' in result.get('note', ''):
+                                result['note'] = ''
+                    else:
+                        print("  ❌ Auto-bypass CAPTCHA thất bại. Sẽ tự động thử lại ở chu kỳ tiếp theo.")
+                        result['note'] = 'Bị CAPTCHA (Đang tự động thử lại)'
+                        result['status'] = 'Lỗi cần chạy lại'
+                elif not result.get('qr_b64'):
+                    if not pdp_url:
+                        result['status'] = 'Lỗi'
+                        result['note'] = 'Không tìm thấy link sản phẩm'
                     else:
                         result['status'] = 'Thiếu giá'
 

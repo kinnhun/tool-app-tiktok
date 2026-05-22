@@ -19,7 +19,7 @@ def build():
     args = [
         'main.py',
         '--onefile',
-        '--name=TikTokScraper_v6.34',
+        '--name=TikTokScraper_v6.40',
         '--add-data=static;static',
         '--collect-all=playwright_stealth',
         '--hidden-import=playwright',
@@ -30,6 +30,8 @@ def build():
         '--hidden-import=gspread',
         '--hidden-import=google.oauth2.service_account',
         '--hidden-import=curl_cffi',
+        '--hidden-import=cv2',
+        '--hidden-import=numpy',
         '--collect-all=playwright',
         '--collect-all=curl_cffi',
         '--collect-all=cloakbrowser',

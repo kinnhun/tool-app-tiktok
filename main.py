@@ -967,20 +967,36 @@ def api_test_scrape():
 
 @app.route('/api/login-tiktok', methods=['POST'])
 def api_login_tiktok():
-    """Start interactive login session."""
+    """Start interactive login session asynchronously."""
     try:
+        from scraper.tiktok_scraper import login_status_dict
+        if login_status_dict['status'] == 'running':
+            return jsonify({'success': False, 'message': 'Tiến trình đăng nhập đang chạy.'})
+            
         data = request.json or {}
         url = data.get('url')
         
-        from scraper.tiktok_scraper import login_tiktok_sync
-        success = login_tiktok_sync(url=url)
+        def _run_in_thread():
+            from scraper.tiktok_scraper import login_tiktok_sync
+            login_tiktok_sync(url=url)
+            
+        import threading
+        threading.Thread(target=_run_in_thread, daemon=True).start()
         
-        if success:
-            return jsonify({'success': True, 'message': 'Đã cập nhật phiên làm việc.'})
-        else:
-            return jsonify({'success': False, 'message': 'Chưa hoàn tất thao tác hoặc hết thời gian.'})
+        return jsonify({'success': True, 'message': 'Đã khởi chạy luồng đăng nhập.'})
     except Exception as e:
         return jsonify({'success': False, 'message': f'Lỗi khởi chạy: {str(e)}'})
+
+@app.route('/api/login-tiktok-status', methods=['GET'])
+def api_login_tiktok_status():
+    """Lấy trạng thái và mã QR của tiến trình đăng nhập."""
+    from scraper.tiktok_scraper import login_status_dict
+    return jsonify({
+        'success': True,
+        'status': login_status_dict['status'],
+        'qr_b64': login_status_dict['qr_b64'],
+        'message': login_status_dict['message']
+    })
 
 # --- API: Multi-account Favorites Sync ---
 @app.route('/api/sync-configs', methods=['GET'])
@@ -1105,6 +1121,17 @@ def api_login_multi():
                     has_session = any(c['name'] == 'sessionid' for c in cookies)
                     
                     if has_session or ("tiktok.com" in page.url and "login" not in page.url):
+                        # Kiểm tra xem có bị CAPTCHA sau đăng nhập không
+                        try:
+                            from scraper.captcha_solver import detect_captcha, solve_captcha
+                            captcha_type, captcha_frame = await detect_captcha(page)
+                            if captcha_type and captcha_type != 'security_check':
+                                login_sessions[profile_name]['message'] = 'Đã đăng nhập! Đang giải CAPTCHA...'
+                                await solve_captcha(page, captcha_type, captcha_frame)
+                                await asyncio.sleep(2)
+                        except:
+                            pass
+                        
                         login_sessions[profile_name]['status'] = 'success'
                         login_sessions[profile_name]['message'] = f'Đã đăng nhập thành công cho {profile_name}'
                         print(f"✅ Đã xác nhận đăng nhập thành công cho {profile_name}")
