@@ -25,11 +25,26 @@ SESSION_BASE_DIR = BASE_DIR
 _session_locks = {}
 _lock_lock = threading.Lock()
 
-def get_session_lock(profile_name):
+def get_session_lock(key):
+    """Lấy khóa đồng bộ cho phiên làm việc, chuẩn hoá mọi đầu vào (profile name, path, folder)."""
+    if not key:
+        key = "default_session"
+    
+    # Nếu key là một đường dẫn tuyệt đối hoặc tương đối
+    if os.path.sep in str(key) or '/' in str(key):
+        key = os.path.basename(os.path.normpath(str(key)))
+        
+    key_str = str(key)
+    # Nếu key bắt đầu bằng tiktok_session_
+    if key_str.startswith("tiktok_session_"):
+        key_str = key_str.replace("tiktok_session_", "")
+    elif key_str == "tiktok_session":
+        key_str = "default_session"
+        
     with _lock_lock:
-        if profile_name not in _session_locks:
-            _session_locks[profile_name] = threading.Lock()
-        return _session_locks[profile_name]
+        if key_str not in _session_locks:
+            _session_locks[key_str] = threading.RLock()
+        return _session_locks[key_str]
 
 # Global state
 sync_status = {
@@ -138,11 +153,11 @@ async def extract_favorites(session_dir, seen_links=None, target_url=None):
             # Khai báo biến lưu video từ API
             api_links = []
             
-            # Hàm lắng nghe và chặn bắt (intercept) API của TikTok (Có thể là favorite/item_list hoặc post/item_list)
+            # Hàm lắng nghe và chặn bắt (intercept) API của TikTok (Chỉ bắt favorite/item_list cho tab Đã Thích)
             async def handle_response(response):
                 try:
                     url = response.url
-                    if "/api/favorite/item_list/" in url or "/api/post/item_list/" in url:
+                    if "/api/favorite/item_list/" in url:
                         json_data = await response.json()
                         if "itemList" in json_data:
                             for item in json_data["itemList"]:
@@ -160,12 +175,13 @@ async def extract_favorites(session_dir, seen_links=None, target_url=None):
             
             # Tới trang profile (Sử dụng URL trực tiếp từ người dùng nếu có)
             profile_url = target_url if target_url and target_url.startswith("http") else "https://www.tiktok.com/profile"
-            # TÌM API TEMPLATE (Bắt request hợp lệ đầu tiên của TikTok)
+            # TÌM API TEMPLATE (Bắt request hợp lệ đầu tiên của TikTok cho tab Đã thích)
             target_api = None
             async def intercept_api(response):
                 nonlocal target_api
-                if "/api/post/item_list/" in response.url and not target_api:
-                    target_api = response.url
+                url = response.url
+                if "/api/favorite/item_list/" in url and not target_api:
+                    target_api = url
             
             page.on("response", intercept_api)
             
@@ -195,13 +211,65 @@ async def extract_favorites(session_dir, seen_links=None, target_url=None):
                         await page.reload(wait_until="domcontentloaded")
                 else:
                     break
+            
+            # Click tab Đã thích (Liked)
+            await asyncio.sleep(2)
+            add_sync_log("Đang click vào tab Đã thích (Liked)...")
+            tab_clicked = False
+            tab_selectors = [
+                'p[role="tab"]:has-text("Liked")',
+                'p[role="tab"]:has-text("Đã thích")',
+                'div[role="tab"]:has-text("Liked")',
+                'div[role="tab"]:has-text("Đã thích")',
+                '[class*="Like"][role="tab"]',
+                'span:has-text("Liked")',
+                'span:has-text("Đã thích")',
+                'a:has-text("Liked")',
+                'a:has-text("Đã thích")'
+            ]
+            for selector in tab_selectors:
+                try:
+                    tab_elem = page.locator(selector).first
+                    if await tab_elem.count() > 0 and await tab_elem.is_visible():
+                        await tab_elem.click()
+                        tab_clicked = True
+                        add_sync_log(f"Đã click tab Đã thích bằng selector: {selector}")
+                        break
+                except Exception:
+                    pass
+            
+            if not tab_clicked:
+                add_sync_log("⚠️ Không tìm thấy hoặc không click được tab Đã thích. Thử tìm theo cấu trúc DOM...")
+                try:
+                    spans = await page.query_selector_all('span')
+                    for span in spans:
+                        text = await span.inner_text()
+                        if text and text.strip() in ["Liked", "Đã thích"]:
+                            await span.click()
+                            tab_clicked = True
+                            add_sync_log("Đã click tab Đã thích qua thẻ span")
+                            break
+                except Exception as e:
+                    add_sync_log(f"Lỗi tìm kiếm span tab: {e}")
                     
             add_sync_log(f"Đang kiểm tra tab Đã thích bằng API nội bộ...")
             
             # Đợi một chút để TikTok gửi API đầu tiên
-            for _ in range(15):
+            for wait_idx in range(15):
                 if target_api: break
                 await asyncio.sleep(1)
+                
+                # Liên tục kiểm tra CAPTCHA trong lúc chờ API (vì CAPTCHA thường nhảy ra sau khi click)
+                if wait_idx % 3 == 0:
+                    try:
+                        from scraper.captcha_solver import detect_captcha, solve_captcha_with_retry
+                        c_type, _ = await detect_captcha(page)
+                        if c_type:
+                            add_sync_log(f"⚠️ Phát hiện CAPTCHA ({c_type}) sau khi click tab! Đang dùng AI Solver...")
+                            solved = await solve_captcha_with_retry(page, max_retries=2)
+                            if solved:
+                                add_sync_log("✅ Đã vượt CAPTCHA thành công, tiếp tục chờ API...")
+                    except: pass
                 
             if not target_api:
                 add_sync_log("❌ Không bắt được API cơ sở. Có thể do mạng chậm hoặc bị chặn hoàn toàn!")
@@ -222,17 +290,18 @@ async def extract_favorites(session_dir, seen_links=None, target_url=None):
             base_api_url = f"{parsed.scheme}://{parsed.netloc}/api/favorite/item_list/?{base_query}"
             
             # Chạy vòng lặp fetch trong trình duyệt
-            # Chỉ lấy 5 link đầu tiên lưu vào bộ nhớ đệm để so sánh cho lần sau
             all_extracted_links = await page.evaluate(f"""async (baseApiUrl) => {{
                 let cursor = 0;
                 let hasMore = true;
                 let results = [];
                 let seen_links = {json.dumps(seen_links) if seen_links else '[]'};
-                // Chỉ so sánh với 5 link mới nhất trong bộ nhớ đệm
-                let recent_cached_links = seen_links.slice(0, 5); 
+                
+                // Tránh việc dừng sớm do video được ghim hoặc thuật toán trả về lộn xộn.
+                // Chỉ dừng khi gặp LIÊN TIẾP 15 video đã tồn tại trong cache (hoặc quét tối đa 20 trang).
+                let consecutive_seen = 0; 
                 let stopFetching = false;
                 
-                for (let i = 0; i < 30; i++) {{ // Tối đa 30 trang
+                for (let i = 0; i < 20; i++) {{ // Quét sâu hơn (20 trang) để đảm bảo không sót
                     if (!hasMore || stopFetching) break;
                     
                     let urlObj = new URL(baseApiUrl);
@@ -280,7 +349,12 @@ async def extract_favorites(session_dir, seen_links=None, target_url=None):
                 return results;
             }}""", base_api_url)
             
-            links = all_extracted_links or []
+            # Gộp cả link từ API chặn bắt và link từ fetch JS
+            combined_links = []
+            for link in api_links + (all_extracted_links or []):
+                if link not in combined_links:
+                    combined_links.append(link)
+            links = combined_links
             
             if len(links) == 0:
                 add_sync_log("⚠️ Không có video Đã Thích mới nào (hoặc danh sách bị ẩn).")
@@ -358,28 +432,30 @@ def process_account_sync_multiple(profile_name, configs, target_url):
             add_sync_log(f"Tài khoản {profile_name}: Không tìm thấy video yêu thích nào.")
             return
 
-        if is_first_run:
-            # Lần đầu chạy đồng bộ: Lấy 10 video mới nhất đẩy lên Sheet, các video cũ hơn chỉ lưu vào cache
-            try:
-                os.makedirs(session_dir, exist_ok=True)
-                with open(seen_links_file, 'w', encoding='utf-8') as f:
-                    json.dump(recent_links, f)
-                    
-                new_links_to_push = recent_links[:10]
-                add_sync_log(f"Tài khoản {profile_name}: Khởi tạo lần đầu, sẽ đồng bộ {len(new_links_to_push)} video mới nhất.")
-            except Exception as e:
-                add_sync_log(f"Lỗi khi lưu cache cho {profile_name}: {str(e)}")
-                return
-        else:
-            # Lọc ra các video thực sự mới (chưa có trong cache)
-            new_links_to_push = []
-            for link in recent_links:
-                if link not in seen_links:
-                    new_links_to_push.append(link)
+        # Lọc ra các video thực sự mới (chưa có trong cache)
+        new_links_to_push = []
+        for link in recent_links:
+            if link not in seen_links:
+                new_links_to_push.append(link)
 
-        if not new_links_to_push:
+        # Đọc danh sách các sheet đã được khởi tạo (đã sync 10 video đầu)
+        synced_sheets_file = os.path.join(session_dir, "synced_sheets.json")
+        synced_sheet_ids = []
+        if os.path.exists(synced_sheets_file):
+            try:
+                with open(synced_sheets_file, 'r', encoding='utf-8') as f:
+                    synced_sheet_ids = json.load(f)
+            except:
+                pass
+                
+        has_new_sheets = any(cfg.get('id') not in synced_sheet_ids for cfg in valid_sheet_configs if cfg.get('id'))
+
+        if not new_links_to_push and not has_new_sheets:
             add_sync_log(f"Tài khoản {profile_name}: Không tìm thấy video yêu thích nào mới.")
             return
+
+        if is_first_run:
+            add_sync_log(f"Tài khoản {profile_name}: Khởi tạo bộ nhớ đệm lần đầu.")
 
         # Lưu danh sách seen_links cập nhật
         updated_seen_links = new_links_to_push + seen_links
@@ -391,19 +467,94 @@ def process_account_sync_multiple(profile_name, configs, target_url):
         except Exception as e:
             add_sync_log(f"Lỗi khi cập nhật cache cho {profile_name}: {str(e)}")
 
+        # Build crawled cache from the first available already-synced sheet to sync data to new sheets
+        crawled_cache = {}
+        for cfg in valid_sheet_configs:
+            if cfg.get('id') in synced_sheet_ids:
+                try:
+                    client = get_client()
+                    spreadsheet = client.open_by_key(cfg['spreadsheet_id'])
+                    worksheet = spreadsheet.worksheet(cfg['tab_name'])
+                    all_values = worksheet.get_all_values()
+                    
+                    if len(all_values) > 1:
+                        # Helper for column letter to index
+                        def _safe_col_to_idx(c, default_c='B'):
+                            c = str(c or default_c).strip().upper()
+                            if not c: c = default_c.upper()
+                            idx = 0
+                            for char in c:
+                                if 'A' <= char <= 'Z':
+                                    idx = idx * 26 + (ord(char) - 64)
+                            return max(0, idx - 1)
+                            
+                        link_idx = _safe_col_to_idx(cfg.get('link_col'), 'B')
+                        
+                        # Helper to safely map columns
+                        def get_val(row, col_letter):
+                            if not col_letter: return ''
+                            idx = _safe_col_to_idx(col_letter)
+                            return row[idx] if len(row) > idx else ''
+                            
+                        for row in all_values[1:]:
+                            if len(row) > link_idx:
+                                raw_link = row[link_idx]
+                                if not raw_link: continue
+                                link_val = raw_link.split('?')[0].strip()
+                                
+                                data = {
+                                    'status': get_val(row, cfg.get('status_col', 'C')),
+                                    'product_name': get_val(row, cfg.get('product_name_col', 'D')),
+                                    'current_price': get_val(row, cfg.get('current_price_col', 'E')),
+                                    'original_price': get_val(row, cfg.get('original_price_col', 'F')),
+                                    'sale_price': get_val(row, cfg.get('sale_price_col', 'G')),
+                                    'product_link': get_val(row, cfg.get('product_link_col', 'H')),
+                                    'shop_name': get_val(row, cfg.get('shop_name_col', 'I')),
+                                    'note': get_val(row, cfg.get('note_col', 'K')),
+                                }
+                                # Only cache if it was successfully scraped
+                                if data['status'] == 'Thành công':
+                                    crawled_cache[raw_link] = data
+                                    crawled_cache[link_val] = data
+                    break # Just need to read from one source of truth
+                except Exception as e:
+                    print(f"Không thể đọc cache từ sheet cũ: {e}")
+
         # Gom nhóm các link mới để cào 1 lần duy nhất cho mỗi link thay vì cào nhiều lần theo từng sheet (chống CAPTCHA)
         scrapes_needed = {} # { link_url: [ {'sheet_config': config, 'row_index': idx} ] }
 
         # Duyệt qua từng cấu hình Sheet để ghi
         for sheet_config in valid_sheet_configs:
+            config_id = sheet_config.get('id')
+            if not config_id: continue
+            
+            if config_id not in synced_sheet_ids:
+                # Sheet mới thêm: lấy tối đa 10 video mới nhất
+                links_for_this_sheet = updated_seen_links[:10]
+            else:
+                # Sheet cũ: chỉ lấy video mới
+                links_for_this_sheet = new_links_to_push
+                
+            if not links_for_this_sheet:
+                continue
+
             try:
                 client = get_client()
                 spreadsheet = client.open_by_key(sheet_config['spreadsheet_id'])
                 worksheet = spreadsheet.worksheet(sheet_config['tab_name'])
                 all_values = worksheet.get_all_values()
                 
+                def _safe_col_to_idx_2(c, default_c='B'):
+                    c = str(c or default_c).strip().upper()
+                    if not c: c = default_c.upper()
+                    idx = 0
+                    for char in c:
+                        if 'A' <= char <= 'Z':
+                            idx = idx * 26 + (ord(char) - 64)
+                    return max(0, idx - 1)
+                    
                 # Giả sử link ở cột B (index 1)
-                link_col_idx = ord(sheet_config.get('link_col', 'B').upper()) - 65
+                link_col_idx = _safe_col_to_idx_2(sheet_config.get('link_col'), 'B')
                 existing_links = []
                 for row in all_values:
                     if len(row) > link_col_idx:
@@ -412,7 +563,7 @@ def process_account_sync_multiple(profile_name, configs, target_url):
                         
                 # Thêm các link chưa tồn tại
                 links_to_add = []
-                for link in reversed(new_links_to_push): # Thêm từ cũ đến mới
+                for link in reversed(links_for_this_sheet): # Thêm từ cũ đến mới
                     if link.split('?')[0].strip() not in existing_links:
                         links_to_add.append(link)
                 
@@ -430,16 +581,48 @@ def process_account_sync_multiple(profile_name, configs, target_url):
                     if success:
                         for i, link in enumerate(links_to_add):
                             existing_links.append(link.split('?')[0].strip())
-                            if link not in scrapes_needed:
-                                scrapes_needed[link] = []
-                            scrapes_needed[link].append({
-                                'sheet_config': sheet_config,
-                                'row_index': row_indices[i]
-                            })
+                            
+                            # Nếu link đã được crawl thành công ở sheet khác (ghi đồng bộ sang)
+                            cached_data = crawled_cache.get(link) or crawled_cache.get(link.split('?')[0].strip())
+                            if cached_data and cached_data.get('status') == 'Thành công':
+                                from scraper.sheet_manager import update_row
+                                column_mapping = {
+                                    'status_col': sheet_config.get('status_col', 'C'),
+                                    'product_name_col': sheet_config.get('product_name_col', 'D'),
+                                    'current_price_col': sheet_config.get('current_price_col', 'E'),
+                                    'original_price_col': sheet_config.get('original_price_col', 'F'),
+                                    'sale_price_col': sheet_config.get('sale_price_col', 'G'),
+                                    'product_link_col': sheet_config.get('product_link_col', 'H'),
+                                    'shop_name_col': sheet_config.get('shop_name_col', 'I'),
+                                    'updated_at_col': sheet_config.get('updated_at_col', 'J'),
+                                    'note_col': sheet_config.get('note_col', 'K'),
+                                }
+                                try:
+                                    update_row(sheet_config['spreadsheet_id'], sheet_config['tab_name'], row_indices[i], cached_data, column_mapping)
+                                    add_sync_log(f"Đã đồng bộ dữ liệu cũ cho link {link} vào Sheet {sheet_config.get('tab_name')} mà không cần cào lại.")
+                                except Exception as ue:
+                                    print(f"Lỗi update_row từ cache: {ue}")
+                            else:
+                                if link not in scrapes_needed:
+                                    scrapes_needed[link] = []
+                                scrapes_needed[link].append({
+                                    'sheet_config': sheet_config,
+                                    'row_index': row_indices[i]
+                                })
                         add_sync_log(f"Tài khoản {profile_name}: Đã thêm {added_count} video mới vào Sheet {sheet_config.get('tab_name')}.")
+                
+                if config_id not in synced_sheet_ids:
+                    synced_sheet_ids.append(config_id)
                 
             except Exception as e:
                 add_sync_log(f"Lỗi khi ghi Sheet {sheet_config.get('tab_name')} tài khoản {profile_name}: {str(e)}")
+                
+        # Cập nhật danh sách sheet đã đồng bộ
+        try:
+            with open(synced_sheets_file, 'w', encoding='utf-8') as f:
+                json.dump(synced_sheet_ids, f)
+        except Exception as e:
+            add_sync_log(f"Lỗi khi lưu danh sách sheet cho {profile_name}: {str(e)}")
                 
         # Kích hoạt quá trình cào dữ liệu: Từng link một, chỉ cào 1 lần và cập nhật vào TẤT CẢ các sheet liên quan
         for link, targets in scrapes_needed.items():
@@ -507,18 +690,4 @@ def sync_all_accounts_job():
     finally:
         sync_status["is_running"] = False
 
-# Scheduler
-def background_scheduler():
-    import time
-    while True:
-        try:
-            if load_sync_configs(): # Chỉ chạy nếu có cấu hình
-                sync_all_accounts_job()
-        except Exception as e:
-            add_sync_log(f"Lỗi scheduler: {e}")
-            
-        time.sleep(120) # Ngủ 2 phút
-
-# Bắt đầu thread
-scheduler_thread = threading.Thread(target=background_scheduler, daemon=True)
-scheduler_thread.start()
+# Bỏ scheduler nội bộ ở đây. Scheduler sẽ được chuyển sang main.py để đưa vào hàng đợi tập trung.

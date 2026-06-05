@@ -23,3 +23,13 @@ buildAppExe.rar
 # OS
 .DS_Store
 Thumbs.db
+
+# Auto-added ignores
+*.exe
+*.spec
+dist/
+tiktok_session_*/
+*.png
+scratch/
+scratch_diff_*.txt
+uploads/

@@ -1,3 +1,9 @@
 {
-  "configs": []
+  "configs": [
+    {
+      "profile_name": "https://www.tiktok.com/@hiki_cosmetics",
+      "sheet_config_id": "20260524132235",
+      "active": true
+    }
+  ]
 }

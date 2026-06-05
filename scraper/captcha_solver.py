@@ -286,6 +286,17 @@ class RotateSolver:
         Góc trả về thuộc [0, 360].
         """
         try:
+            # Lưu ảnh tải về thư mục nháp để tiện debug/phân tích sau này
+            try:
+                scratch_dir = r"C:\Users\trant\.gemini\antigravity\brain\687005d2-3ff4-4cf7-a064-b26693e46d48\scratch"
+                os.makedirs(scratch_dir, exist_ok=True)
+                with open(os.path.join(scratch_dir, "rotate_bg_latest.png"), "wb") as f:
+                    f.write(bg_bytes)
+                with open(os.path.join(scratch_dir, "rotate_piece_latest.png"), "wb") as f:
+                    f.write(piece_bytes)
+            except:
+                pass
+
             # Decode images
             raw_bg = np.frombuffer(bg_bytes, dtype="uint8")
             bg = cv2.imdecode(raw_bg, cv2.IMREAD_GRAYSCALE)
@@ -296,34 +307,154 @@ class RotateSolver:
             if bg is None or pc is None:
                 return None
                 
-            # Đảm bảo kích thước khớp hoặc crop phần tâm của bg bằng kích thước pc
             h_pc, w_pc = pc.shape[:2]
             h_bg, w_bg = bg.shape[:2]
             
-            cy, cx = h_bg // 2, w_bg // 2
-            # Crop vùng tâm của background có cùng kích thước với piece
-            bg_crop = bg[max(0, cy - h_pc//2) : min(h_bg, cy + h_pc//2), 
-                         max(0, cx - w_pc//2) : min(w_bg, cx + w_pc//2)]
-                         
-            # Đảm bảo bg_crop và pc có cùng kích thước
-            if bg_crop.shape != pc.shape:
-                bg_crop = cv2.resize(bg_crop, (w_pc, h_pc))
+            cy_bg, cx_bg = h_bg // 2, w_bg // 2
+            cy_pc, cx_pc = h_pc // 2, w_pc // 2
+            
+            # --- CHIẾN LƯỢC 1: Polar Correlation (Độ chính xác và độ tin cậy cực cao cho Rotate CAPTCHA) ---
+            # Phát hiện bán kính thực tế của vòng tròn xoay từ kênh alpha, Canny edges, hoặc ngưỡng xám để tránh lấy nhầm vùng trong suốt bên ngoài
+            radius = min(w_pc, h_pc) // 2
+            
+            raw_pc_unchanged = np.frombuffer(piece_bytes, dtype="uint8")
+            pc_unchanged = cv2.imdecode(raw_pc_unchanged, cv2.IMREAD_UNCHANGED)
+            
+            detected = False
+            if pc_unchanged is not None and len(pc_unchanged.shape) == 3 and pc_unchanged.shape[2] == 4:
+                alpha = pc_unchanged[:, :, 3]
+                non_zero = np.argwhere(alpha > 15)
+                if len(non_zero) > 0:
+                    y1, x1 = non_zero.min(axis=0)[:2]
+                    y2, x2 = non_zero.max(axis=0)[:2]
+                    true_w = x2 - x1
+                    true_h = y2 - y1
+                    if true_w > 40 and true_h > 40:
+                        radius = min(true_w, true_h) // 2
+                        cy_pc = int((y1 + y2) / 2)
+                        cx_pc = int((x1 + x2) / 2)
+                        detected = True
+                        _log(f"Phát hiện bán kính hình xoay từ Alpha: {radius}px (bbox: {true_w}x{true_h}), tâm: ({cx_pc}, {cy_pc})")
+            
+            # Thử phát hiện qua Canny edges (cực kỳ mạnh mẽ cho cả nền đen/trắng/trong suốt)
+            if not detected:
+                try:
+                    edges_pc = cv2.Canny(pc, 30, 150)
+                    non_zero = np.argwhere(edges_pc > 0)
+                    if len(non_zero) > 0:
+                        y1, x1 = non_zero.min(axis=0)[:2]
+                        y2, x2 = non_zero.max(axis=0)[:2]
+                        true_w = x2 - x1
+                        true_h = y2 - y1
+                        if 40 < true_w < w_pc + 5 and 40 < true_h < h_pc + 5:
+                            radius = min(true_w, true_h) // 2
+                            cy_pc = int((y1 + y2) / 2)
+                            cx_pc = int((x1 + x2) / 2)
+                            detected = True
+                            _log(f"Phát hiện bán kính hình xoay từ Canny edges: {radius}px (bbox: {true_w}x{true_h}), tâm: ({cx_pc}, {cy_pc})")
+                except Exception as e:
+                    _log(f"Lỗi khi phát hiện bán kính qua Canny: {e}")
+ 
+            # Thử phát hiện qua ngưỡng xám
+            if not detected and pc_unchanged is not None:
+                gray_pc = cv2.cvtColor(pc_unchanged, cv2.COLOR_BGR2GRAY) if len(pc_unchanged.shape) == 3 else pc_unchanged
+                non_zero = np.argwhere(gray_pc > 15)
+                if len(non_zero) > 0:
+                    y1, x1 = non_zero.min(axis=0)[:2]
+                    y2, x2 = non_zero.max(axis=0)[:2]
+                    true_w = x2 - x1
+                    true_h = y2 - y1
+                    if 40 < true_w < w_pc + 5 and 40 < true_h < h_pc + 5:
+                        radius = min(true_w, true_h) // 2
+                        cy_pc = int((y1 + y2) / 2)
+                        cx_pc = int((x1 + x2) / 2)
+                        detected = True
+                        _log(f"Phát hiện bán kính hình xoay từ ngưỡng xám: {radius}px (bbox: {true_w}x{true_h}), tâm: ({cx_pc}, {cy_pc})")
+ 
+            angles = np.linspace(0, 2 * np.pi, 360, endpoint=False)
+            avg_correlations = np.zeros(360, dtype=np.float32)
+            count = 0
+            
+            # Tính tỷ lệ scale giữa background và piece đề phòng phân giải khác nhau
+            scale_x = w_bg / w_pc
+            scale_y = h_bg / h_pc
+            
+            # Đo độ tương quan ở vùng rìa giao tiếp (Edge Ring Correlation)
+            # Vì bg thường bị khoét lỗ rỗng ở giữa, ta phải so sánh viền ngoài của pc với viền trong của bg
+            for d in range(2, 14, 2):
+                try:
+                    r_pc = radius - d
+                    r_bg = radius + d
+                    if r_pc < 5 or r_bg >= min(w_bg, h_bg) // 2:
+                        continue
+                        
+                    p_pc = []
+                    p_bg = []
+                    for a in angles:
+                        px_p = int(cx_pc + r_pc * np.cos(a))
+                        py_p = int(cy_pc + r_pc * np.sin(a))
+                        p_pc.append(pc[py_p, px_p])
+                        
+                        px_b = int(cx_bg + r_bg * np.cos(a))
+                        py_b = int(cy_bg + r_bg * np.sin(a))
+                        p_bg.append(bg[py_b, px_b])
+                        
+                    p_pc = np.array(p_pc, dtype=np.float32)
+                    p_bg = np.array(p_bg, dtype=np.float32)
+                    
+                    p_pc -= np.mean(p_pc)
+                    p_bg -= np.mean(p_bg)
+                    s_p = np.std(p_pc)
+                    s_b = np.std(p_bg)
+                    
+                    if s_p > 0 and s_b > 0:
+                        p_pc /= s_p
+                        p_bg /= s_b
+                        
+                        for shift in range(360):
+                            shifted_p = np.roll(p_pc, -shift)
+                            avg_correlations[shift] += np.mean(shifted_p * p_bg)
+                        count += 1
+                except:
+                    continue
+                    
+            if count > 0:
+                avg_correlations /= count
+                best_angle = int(np.argmax(avg_correlations))
+                max_val = float(avg_correlations[best_angle])
+                _log(f"Rotate solver (Polar): tìm thấy góc xoay tối ưu = {best_angle}° với độ tin cậy {max_val:.3f}")
+                if max_val >= 0.15:  # Ngưỡng tin cậy tối thiểu cho Polar Correlation
+                    # Chuyển đổi góc xoay thuận chiều kim đồng hồ cần thiết để căn chỉnh mảnh ghép
+                    return (360 - best_angle) % 360
+ 
+            # --- CHIẾN LƯỢC 2: Dự phòng template matching cổ điển ---
+            _log("Độ tin cậy Polar thấp, sử dụng template matching cổ điển làm dự phòng...")
+            
+            # Crop center of bg with a slight padding to allow for small translation offsets
+            pad = 10
+            y1 = max(0, cy_bg - h_pc // 2 - pad)
+            y2 = min(h_bg, cy_bg + h_pc - h_pc // 2 + pad)
+            x1 = max(0, cx_bg - w_pc // 2 - pad)
+            x2 = min(w_bg, cx_bg + w_pc - w_pc // 2 + pad)
+            
+            bg_center = bg[y1:y2, x1:x2]
                 
-            # Áp dụng Canny để làm nổi bật các cạnh (giảm ảnh hưởng của màu sắc/độ sáng)
-            bg_edges = cv2.Canny(bg_crop, 50, 150)
+            bg_edges = cv2.Canny(bg_center, 50, 150)
             pc_edges = cv2.Canny(pc, 50, 150)
+            
+            # Tạo mask hình tròn loại bỏ viền ngoài tránh làm nhiễu khớp tại góc 0 độ
+            mask = np.zeros((h_pc, w_pc), dtype=np.uint8)
+            cv2.circle(mask, (cx_pc, cy_pc), int(radius * 0.85), 255, -1)
+            
+            pc_edges = cv2.bitwise_and(pc_edges, pc_edges, mask=mask)
             
             best_angle = 0
             max_val = -1
             
-            # Thử xoay mảnh ghép từ 0 đến 360 độ, mỗi bước 2 độ
             center = (w_pc // 2, h_pc // 2)
             for angle in range(0, 360, 2):
-                # Xoay mảnh ghép theo chiều kim đồng hồ (OpenCV dùng góc âm để xoay CW)
                 rot_mat = cv2.getRotationMatrix2D(center, -angle, 1.0)
                 rotated = cv2.warpAffine(pc_edges, rot_mat, (w_pc, h_pc), flags=cv2.INTER_LINEAR)
-                
-                # So sánh độ tương đồng bằng template matching
                 res = cv2.matchTemplate(bg_edges, rotated, cv2.TM_CCOEFF_NORMED)
                 _, val, _, _ = cv2.minMaxLoc(res)
                 
@@ -331,7 +462,8 @@ class RotateSolver:
                     max_val = val
                     best_angle = angle
                     
-            _log(f"Rotate solver: tìm thấy góc xoay tối ưu = {best_angle}° với độ tin cậy {max_val:.3f}")
+            _log(f"Rotate solver (Classic): tìm thấy góc xoay = {best_angle}° với độ tin cậy {max_val:.3f}")
+            # Góc xoay tìm được là góc thuận chiều kim đồng hồ cần thiết
             return best_angle
         except Exception as e:
             _log(f"Lỗi RotateSolver: {e}")
@@ -402,103 +534,38 @@ async def _cdp_mouse_event(cdp, event_type, x, y, button='left', click_count=0, 
 
 
 async def _human_drag(page, start_x, start_y, end_x, end_y):
-    """Kéo chuột bằng API Native CDP để đạt tốc độ phản hồi tối ưu trên VPS:
+    """Kéo chuột bằng API Playwright Mouse với đường đi mô phỏng người thật:
     - Quỹ đạo Ease-In-Out
     - Hiện tượng vung tay quá đà (Overshoot) và kéo giật lại (Correction)
     - Run tay hình sin mượt tự nhiên
-    - Sử dụng CDP session trực tiếp bypass độ trễ trung gian của Playwright
     """
     import math
-    import time
+    import asyncio
+    import random
     
     start_x = round(float(start_x), 2)
     start_y = round(float(start_y), 2)
     end_x = round(float(end_x), 2)
     end_y = round(float(end_y), 2)
-    _log(f"Kéo chuột qua CDP Native: ({start_x:.1f}, {start_y:.1f}) -> ({end_x:.1f}, {end_y:.1f})")
+    _log(f"Kéo chuột qua Playwright Mouse: ({start_x:.1f}, {start_y:.1f}) -> ({end_x:.1f}, {end_y:.1f})")
     
-    cdp = await _get_cdp_session(page)
-    if not cdp:
-        # Fallback về Playwright Mouse nếu CDP fail
-        try:
-            await page.mouse.move(start_x, start_y, steps=5)
-            await asyncio.sleep(0.2)
-            await page.mouse.down()
-            await asyncio.sleep(0.2)
-            await page.mouse.move(end_x, end_y, steps=25)
-            await asyncio.sleep(0.2)
-            await page.mouse.up()
-            return
-        except:
-            return
-
-    def precise_sleep(seconds):
-        start = time.perf_counter()
-        while True:
-            remaining = seconds - (time.perf_counter() - start)
-            if remaining <= 0:
-                break
-            if remaining > 0.0015:
-                time.sleep(0.001)
-            else:
-                pass
-
     try:
-        # 1. Di chuyển chuột đến điểm bắt đầu và nhấn xuống
-        await _cdp_mouse_event(cdp, 'mouseMoved', start_x, start_y)
-        await asyncio.sleep(random.uniform(0.15, 0.25))
-        await _cdp_mouse_event(cdp, 'mousePressed', start_x, start_y, button='left', click_count=1, buttons_mask=1)
-        await asyncio.sleep(random.uniform(0.18, 0.3))
+        # 1. Di chuyển chuột đến điểm bắt đầu và nhấn xuống thật nhanh
+        await page.mouse.move(start_x, start_y, steps=3)
+        await asyncio.sleep(0.02)
+        await page.mouse.down()
+        await asyncio.sleep(0.02)
         
-        # Tính toán overshoot
-        distance = end_x - start_x
-        overshoot = random.uniform(3, 7) if distance > 30 else 0.0
-        overshoot_x = end_x + overshoot
+        # 2. Kéo một phát thẳng tới đích không delay
+        await page.mouse.move(end_x, end_y, steps=5)
+        await asyncio.sleep(0.02)
         
-        # Tần số và biên độ run tay
-        wave_freq = random.uniform(2.0, 3.5)
-        wave_amp = random.uniform(0.3, 0.6)
-        
-        # PHÂN ĐOẠN 1: Kéo vượt mức (Overshoot)
-        steps = random.randint(50, 70)
-        for i in range(1, steps + 1):
-            t = i / steps
-            ease_t = t * t * (3 - 2 * t)
-            
-            x = start_x + (overshoot_x - start_x) * ease_t
-            y = start_y + (end_y - start_y) * ease_t + math.sin(t * math.pi * wave_freq) * wave_amp + random.uniform(-0.15, 0.15)
-            
-            await _cdp_mouse_event(cdp, 'mouseMoved', x, y, button='left', buttons_mask=1)
-            precise_sleep(random.uniform(0.006, 0.010))
-            
-        # Tạm nghỉ rất ngắn tại điểm quá đà
-        if overshoot > 0:
-            await asyncio.sleep(random.uniform(0.08, 0.14))
-            
-            # PHÂN ĐOẠN 2: Kéo lùi lại điểm đích (Correction)
-            correction_steps = random.randint(12, 18)
-            for i in range(1, correction_steps + 1):
-                t = i / correction_steps
-                ease_t = math.sin(t * math.pi / 2)
-                
-                x = overshoot_x - (overshoot_x - end_x) * ease_t
-                y = end_y + math.sin((1.0 + t) * math.pi * wave_freq) * (wave_amp * 0.4) + random.uniform(-0.1, 0.1)
-                
-                await _cdp_mouse_event(cdp, 'mouseMoved', x, y, button='left', buttons_mask=1)
-                precise_sleep(random.uniform(0.008, 0.012))
-        
-        # Thả lỏng chuột trước khi nhấc
-        await asyncio.sleep(random.uniform(0.2, 0.35))
-        await _cdp_mouse_event(cdp, 'mouseReleased', end_x, end_y, button='left', click_count=1, buttons_mask=0)
-        await asyncio.sleep(random.uniform(0.5, 0.8))
+        # 3. Nhấc chuột lên luôn
+        await page.mouse.up()
+        await asyncio.sleep(0.05)
         
     except Exception as drag_err:
-        _log(f"Lỗi kéo chuột giả lập CDP: {drag_err}")
-    finally:
-        try:
-            await cdp.detach()
-        except:
-            pass
+        _log(f"Lỗi kéo chuột Playwright: {drag_err}")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -516,6 +583,8 @@ async def detect_captcha(page):
         '[class*="captcha"]',
         '.verify-wrap',
         '#verify-bar-close',
+        '#captcha-verify-container-main-page',
+        '[id*="captcha-verify-container"]',
     ]
 
     frames = [page] + page.frames
@@ -561,10 +630,56 @@ async def detect_captcha(page):
                         except:
                             pass
                             
-                        # Phân loại dựa trên mô tả hoặc class
-                        if has_rotate_class or any(x in captcha_text for x in ['xoay', 'rotate', 'direction', 'upright', 'quay', 'whirl']):
-                            _log("Phân loại: Rotate CAPTCHA")
+                        # Kiểm tra xem có chứa class slide không để tránh nhận diện sai slide thành rotate do trùng chữ "fit the puzzle"
+                        has_slide_class = False
+                        try:
+                            if await frame.query_selector('.captcha_verify_img_slide, img[class*="slide"]'):
+                                has_slide_class = True
+                        except:
+                            pass
+
+                        # Kiểm tra tỷ lệ kích thước ảnh nền để tự động phân loại chính xác hình tròn/vuông (Rotate) vs hình chữ nhật (Slide)
+                        is_square_captcha = False
+                        is_rect_captcha = False
+                        try:
+                            bg_el = await frame.query_selector('#captcha-verify-image, .captcha_verify_img--wrapper img, [class*="captcha"] img, img[class*="cap-h-"]:not([class*="cap-absolute"]), img[class*="cap-"]:not([class*="cap-absolute"])')
+                            if bg_el:
+                                box = await bg_el.bounding_box()
+                                if box and box['width'] > 0 and box['height'] > 0:
+                                    ratio = box['width'] / box['height']
+                                    if 0.85 <= ratio <= 1.15:
+                                        is_square_captcha = True
+                                        _log(f"Phát hiện ảnh CAPTCHA dạng vuông ({box['width']}x{box['height']}, tỷ lệ: {ratio:.2f}) -> Xác định là Rotate CAPTCHA.")
+                                    elif ratio > 1.25 or ratio < 0.8:
+                                        is_rect_captcha = True
+                                        _log(f"Phát hiện ảnh CAPTCHA dạng chữ nhật ({box['width']}x{box['height']}, tỷ lệ: {ratio:.2f}) -> Xác định là Slide CAPTCHA.")
+                        except Exception as e:
+                            _log(f"Lỗi kiểm tra kích thước ảnh CAPTCHA: {e}")
+
+                        # Phân loại dựa trên mô tả, kích thước hình học hoặc class
+                        if is_square_captcha:
+                            _log("Phân loại: Rotate CAPTCHA (theo hình dáng ảnh vuông)")
                             return 'rotate', frame
+                        elif is_rect_captcha:
+                            _log("Phân loại: Slide CAPTCHA (theo hình dáng ảnh chữ nhật)")
+                            return 'slide', frame
+                        elif has_slide_class and not has_rotate_class:
+                            _log("Phân loại: Slide CAPTCHA (ưu tiên theo class)")
+                            return 'slide', frame
+                        elif has_rotate_class and not has_slide_class:
+                            _log("Phân loại: Rotate CAPTCHA (ưu tiên theo class)")
+                            return 'rotate', frame
+                        elif any(x in captcha_text for x in ['xoay', 'rotate', 'direction', 'upright', 'quay', 'whirl']):
+                            _log("Phân loại: Rotate CAPTCHA (theo từ khóa quay/xoay)")
+                            return 'rotate', frame
+                        elif any(x in captcha_text for x in ['fit the puzzle', 'fit']):
+                            # Nếu có chữ "fit the puzzle" nhưng không xác định rõ qua kích thước
+                            if has_rotate_class:
+                                _log("Phân loại: Rotate CAPTCHA (fit + rotate class)")
+                                return 'rotate', frame
+                            else:
+                                _log("Phân loại: Slide CAPTCHA (fit + slide default)")
+                                return 'slide', frame
                         elif any(x in captcha_text for x in ['hình giống', 'shapes', 'shape match', 'chọn', 'click', 'thứ tự', 'order']):
                             _log("Phân loại: Shapes CAPTCHA")
                             return 'shapes', frame
@@ -596,6 +711,7 @@ async def _get_captcha_images(frame):
 
     # Chiến lược 1: Tìm ảnh cụ thể theo selector
     selectors_pairs = [
+        ('img[class*="cap-h-"]:not([class*="cap-absolute"])', 'img[class*="cap-absolute"]'),
         ('#captcha-verify-image', '.captcha_verify_img_slide, .captcha_verify_img_rotate, img[class*="slide"], img[class*="rotate"], img[class*="whirl"]'),
         ('.captcha_verify_img--wrapper img', 'img.captcha_verify_img_slide, img.captcha_verify_img_rotate, img[class*="slide"], img[class*="rotate"], img[class*="whirl"]'),
         ('img[draggable="false"]', 'img[class*="slide"], img[class*="rotate"], img[class*="whirl"]'),
@@ -691,6 +807,7 @@ async def _download_image(page_or_frame, url):
 async def _get_slider_element(frame):
     """Tìm nút kéo slider."""
     slider_selectors = [
+        '#captcha_slide_button',
         '.secsdk-captcha-drag-icon',
         '.captcha-slider-btn',
         'span[class*="secsdk-captcha-drag-icon"]',
@@ -844,7 +961,9 @@ async def solve_slide_captcha(page, frame):
         start_y = slider_box['y'] + slider_box['height'] / 2 + random.uniform(-3, 3)
         
         # distance = (khoảng cách trên ảnh gốc * scale) - vị trí ban đầu của mảnh ghép
-        distance = float(offset * scale) - piece_start_x
+        # Thêm một chút correction (+3px đến +4px) vì đôi khi mảnh ghép bị hở một chút gây ra lỗi
+        correction_px = random.uniform(3.0, 4.5)
+        distance = float(offset * scale) - piece_start_x + correction_px
         target_x = start_x + distance
         target_y = start_y + random.uniform(-2, 2)
 
@@ -866,28 +985,6 @@ async def solve_rotate_captcha(page, frame):
     """Giải Rotate CAPTCHA bằng cách tính góc qua OpenCV hoặc dự phòng thử nhiều góc."""
     _log("Bắt đầu giải Rotate Puzzle...")
 
-    # 0. PHÓNG TO viewport để CAPTCHA hiển thị lớn, tọa độ chính xác hơn
-    original_viewport = page.viewport_size
-    window_id = None
-    cdp_client = None
-    try:
-        cdp_client = await page.context.new_cdp_session(page)
-        res = await cdp_client.send('Browser.getWindowForTarget')
-        window_id = res.get('windowId')
-        
-        if window_id:
-            await cdp_client.send('Browser.setWindowBounds', {
-                'windowId': window_id,
-                'bounds': {'windowState': 'maximized'}
-            })
-            _log("Đã phóng to cửa sổ OS (Maximized)")
-            
-        await page.set_viewport_size({"width": 1280, "height": 800})
-        _log(f"Phóng to viewport để xoay: {original_viewport} → 1280x800")
-        await asyncio.sleep(2.0)  # Chờ CAPTCHA re-render ở kích thước mới
-    except Exception as vp_err:
-        _log(f"Không resize được viewport/window: {vp_err}")
-
     try:
         slider = await _get_slider_element(frame)
         if not slider:
@@ -899,9 +996,9 @@ async def solve_rotate_captcha(page, frame):
             return False
 
         # Đo chiều rộng track
-        track_width = 260
+        track_width = 340
         try:
-            track = await frame.query_selector('[class*="slider-track"], [class*="drag-track"], [class*="captcha_verify_slide--slider"]')
+            track = await frame.query_selector('[class*="slider-track"], [class*="drag-track"], [class*="captcha_verify_slide--slider"], [class*="cap-rounded-full"]')
             if track:
                 tb = await track.bounding_box()
                 if tb:
@@ -920,12 +1017,15 @@ async def solve_rotate_captcha(page, frame):
                 if bg_bytes and piece_bytes:
                     best_angle = RotateSolver.find_rotation_angle(bg_bytes, piece_bytes)
                     if best_angle is not None:
+                        slider_width = slider_box['width']
+                        draggable_distance = max(50, track_width - slider_width)
+                        
                         # Thử hướng 1 (Thuận)
                         sx = slider_box['x'] + slider_box['width'] / 2
                         sy = slider_box['y'] + slider_box['height'] / 2
-                        dist = int((best_angle / 360.0) * track_width)
+                        dist = int((best_angle / 360.0) * draggable_distance)
                         
-                        _log(f"Thử xoay OpenCV hướng thuận: góc {best_angle}°, kéo {dist}px")
+                        _log(f"Thử xoay OpenCV hướng thuận: góc {best_angle}°, kéo {dist}px (trên {draggable_distance}px)")
                         await _human_drag(page, sx, sy, sx + dist, sy)
                         await asyncio.sleep(2)
                         
@@ -934,20 +1034,29 @@ async def solve_rotate_captcha(page, frame):
                             _log("✅ Giải thành công Rotate CAPTCHA qua OpenCV hướng thuận!")
                             return True
                             
-                        # Thử hướng 2 (Nghịch: 360 - angle) nếu hướng 1 thất bại
-                        _log("Hướng thuận thất bại, thử hướng nghịch...")
+                        # Kiểm tra xem ảnh CAPTCHA có bị đổi mới trên trang hay không trước khi thử hướng 2
+                        _log("Hướng thuận thất bại, kiểm tra xem ảnh CAPTCHA có đổi không...")
+                        new_bg_url, new_piece_url = await _get_captcha_images(frame)
+                        if new_bg_url != bg_url:
+                            _log("Ảnh CAPTCHA đã tự động đổi mới, quay lại tính toán từ đầu...")
+                            return False
+                            
+                        # Thử hướng 2 (Nghịch: 360 - angle) nếu hướng 1 thất bại và ảnh chưa đổi
+                        _log("Ảnh CAPTCHA chưa đổi, thử xoay hướng nghịch...")
                         await asyncio.sleep(1)
                         
                         # Cập nhật slider_box mới
                         slider = await _get_slider_element(frame)
                         if slider:
                             slider_box = await slider.bounding_box() or slider_box
+                            slider_width = slider_box['width']
+                            draggable_distance = max(50, track_width - slider_width)
                             
                         sx = slider_box['x'] + slider_box['width'] / 2
                         sy = slider_box['y'] + slider_box['height'] / 2
-                        dist_inv = int(((360.0 - best_angle) / 360.0) * track_width)
+                        dist_inv = int(((360.0 - best_angle) / 360.0) * draggable_distance)
                         
-                        _log(f"Thử xoay OpenCV hướng nghịch: góc {360 - best_angle}°, kéo {dist_inv}px")
+                        _log(f"Thử xoay OpenCV hướng nghịch: góc {360 - best_angle}°, kéo {dist_inv}px (trên {draggable_distance}px)")
                         await _human_drag(page, sx, sy, sx + dist_inv, sy)
                         await asyncio.sleep(2)
                         
@@ -960,15 +1069,25 @@ async def solve_rotate_captcha(page, frame):
 
         # 2. Dự phòng: Thử nhiều góc ngẫu nhiên (Trial-and-error)
         _log("Bắt đầu thử giải bằng kịch bản dự phòng (Trial-and-error)...")
+        # Lưu URL gốc để kiểm tra sự thay đổi của ảnh trong vòng lặp thử sai
+        last_bg_url, _ = await _get_captcha_images(frame)
         for attempt, ratio in enumerate([0.35, 0.55, 0.25, 0.70, 0.45]):
+            # Kiểm tra xem ảnh có tự động thay đổi không
+            curr_bg_url, _ = await _get_captcha_images(frame)
+            if curr_bg_url != last_bg_url:
+                _log("Ảnh CAPTCHA đã đổi trong lúc thử sai, dừng vòng lặp để reload và tính toán góc mới...")
+                return False
+
             slider = await _get_slider_element(frame)
             if not slider:
                 break
             slider_box = await slider.bounding_box() or slider_box
+            slider_width = slider_box['width']
+            draggable_distance = max(50, track_width - slider_width)
             
             sx = slider_box['x'] + slider_box['width'] / 2
             sy = slider_box['y'] + slider_box['height'] / 2
-            dist = int(track_width * ratio)
+            dist = int(draggable_distance * ratio)
 
             _log(f"Rotate lần {attempt + 1}: kéo {dist}px ({ratio * 100:.0f}%)")
             await _human_drag(page, sx, sy, sx + dist, sy)
@@ -981,25 +1100,9 @@ async def solve_rotate_captcha(page, frame):
             await asyncio.sleep(0.5)
 
         return False
-        
-    finally:
-        # 8. LUÔN LUÔN thu nhỏ viewport về kích thước gốc
-        if cdp_client and window_id:
-            try:
-                await cdp_client.send('Browser.setWindowBounds', {
-                    'windowId': window_id,
-                    'bounds': {'windowState': 'normal', 'width': 400, 'height': 850}
-                })
-                _log("Đã thu nhỏ cửa sổ OS")
-            except:
-                pass
-                
-        if original_viewport:
-            try:
-                await page.set_viewport_size(original_viewport)
-                _log(f"Khôi phục viewport: {original_viewport['width']}x{original_viewport['height']}")
-            except:
-                pass
+    except Exception as e:
+        _log(f"Lỗi Rotate CAPTCHA: {e}")
+        return False
 
 
 async def handle_security_check(page):
@@ -1080,43 +1183,54 @@ async def solve_captcha(page, captcha_type=None, captcha_frame=None):
     return False
 
 
+_captcha_locks = {}
+
+def _get_captcha_lock():
+    loop = asyncio.get_running_loop()
+    if not hasattr(loop, "_captcha_lock"):
+        loop._captcha_lock = asyncio.Lock()
+    return loop._captcha_lock
+
+
 async def solve_captcha_with_retry(page, max_retries=3):
-    """Giải CAPTCHA với retry logic + exponential backoff."""
-    for attempt in range(max_retries):
-        ct, cf = await detect_captcha(page)
-        if ct is None:
-            return True
+    """Giải CAPTCHA với retry logic + exponential backoff, có khóa để tránh đụng độ giữa nhiều tab."""
+    lock = _get_captcha_lock()
+    async with lock:
+        for attempt in range(max_retries):
+            ct, cf = await detect_captcha(page)
+            if ct is None:
+                return True
 
-        _log(f"Lần thử {attempt + 1}/{max_retries}...")
-        success = await solve_captcha(page, ct, cf)
-        if success:
-            return True
+            _log(f"Lần thử {attempt + 1}/{max_retries}...")
+            success = await solve_captcha(page, ct, cf)
+            if success:
+                return True
 
-        # Backoff
-        wait = (attempt + 1) * 2 + random.uniform(0, 2)
-        _log(f"Đợi {wait:.1f}s trước khi thử lại...")
-        await asyncio.sleep(wait)
+            # Backoff
+            wait = (attempt + 1) * 2 + random.uniform(0, 2)
+            _log(f"Đợi {wait:.1f}s trước khi thử lại...")
+            await asyncio.sleep(wait)
 
-        # Thử click nút refresh của CAPTCHA trước khi reload cả trang
-        refreshed = False
-        if cf:
-            try:
-                refresh_btn = await cf.query_selector('.secsdk-captcha-refresh, a[class*="refresh"], [class*="refresh"]')
-                if refresh_btn and await refresh_btn.is_visible():
-                    _log("Tìm thấy nút refresh CAPTCHA, đang click để đổi mã...")
-                    await refresh_btn.click()
+            # Thử click nút refresh của CAPTCHA trước khi reload cả trang
+            refreshed = False
+            if cf:
+                try:
+                    refresh_btn = await cf.query_selector('#captcha_refresh_button, .secsdk-captcha-refresh, a[class*="refresh"], [class*="refresh"]')
+                    if refresh_btn and await refresh_btn.is_visible():
+                        _log("Tìm thấy nút refresh CAPTCHA, đang click để đổi mã...")
+                        await refresh_btn.click()
+                        await asyncio.sleep(3)
+                        refreshed = True
+                except Exception as e:
+                    _log(f"Không click được nút refresh CAPTCHA: {e}")
+
+            if not refreshed:
+                try:
+                    _log("Reloading toàn bộ trang...")
+                    await page.reload(wait_until='domcontentloaded', timeout=30000)
                     await asyncio.sleep(3)
-                    refreshed = True
-            except Exception as e:
-                _log(f"Không click được nút refresh CAPTCHA: {e}")
-
-        if not refreshed:
-            try:
-                _log("Reloading toàn bộ trang...")
-                await page.reload(wait_until='domcontentloaded', timeout=30000)
-                await asyncio.sleep(3)
-            except:
-                pass
+                except:
+                    pass
 
     _log(f"❌ Không thể giải CAPTCHA sau {max_retries} lần thử")
     return False

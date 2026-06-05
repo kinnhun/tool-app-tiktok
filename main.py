@@ -432,10 +432,71 @@ def api_quick_add_scrape():
         return jsonify({'success': False, 'message': f'Lỗi hệ thống: {str(e)}'})
 
 
+import queue
+
 _direct_scrape_lock = threading.Lock()
-_scrape_rate_limiter = threading.Semaphore(1)  # Chỉ cho 1 luồng cào cùng lúc
+_scrape_rate_limiter = threading.Semaphore(1)  # Chỉ cho 1 luồng cào cùng lúc (giữ lại cho an toàn)
 _last_scrape_time = 0  # Thời điểm cào gần nhất
 _MIN_SCRAPE_INTERVAL = 2.0  # Tối thiểu 2 giây giữa 2 lần cào (= tối đa ~43,200 video/ngày)
+
+# Global Task Queue để xử lý tuần tự (Pipeline)
+_scrape_task_queue = queue.Queue()
+
+def _scrape_worker_thread():
+    """Luồng worker duy nhất đọc task từ queue và xử lý tuần tự."""
+    import gc
+    while True:
+        task = _scrape_task_queue.get()
+        try:
+            task()
+        except Exception as e:
+            print(f"Lỗi trong quá trình xử lý queue tuần tự: {e}")
+        finally:
+            _scrape_task_queue.task_done()
+            del task  # Ép xóa con trỏ hàm để giải phóng biến cục bộ
+            gc.collect()  # Gọi bộ thu gom rác dọn dẹp RAM ngay lập tức
+
+# Khởi động worker thread chạy ngầm
+threading.Thread(target=_scrape_worker_thread, daemon=True).start()
+
+_is_sync_queued = False
+
+def _sync_wrapper():
+    global _is_sync_queued
+    from scraper.favorites_syncer import sync_all_accounts_job
+    try:
+        sync_all_accounts_job()
+    finally:
+        _is_sync_queued = False
+
+def global_background_scheduler():
+    """Lập lịch chạy ngầm quét profile mỗi 2 phút, đưa vào hàng đợi tập trung."""
+    import time
+    from scraper.favorites_syncer import load_sync_configs, sync_status, add_sync_log
+    
+    # Chờ 10 giây ban đầu để hệ thống ổn định
+    time.sleep(10)
+    
+    global _is_sync_queued
+    
+    while True:
+        try:
+            if load_sync_configs():
+                # Chỉ đưa vào hàng đợi nếu không có job nào đang chạy và chưa có job nào nằm chờ
+                if not sync_status.get("is_running") and not _is_sync_queued:
+                    print("🕒 [Lịch trình 2 phút] Đưa tác vụ Quét Profile vào hàng đợi tập trung...")
+                    _is_sync_queued = True
+                    _scrape_task_queue.put(_sync_wrapper)
+        except Exception as e:
+            try:
+                add_sync_log(f"Lỗi global scheduler: {e}")
+            except:
+                pass
+            
+        time.sleep(120)
+
+# Khởi động luồng lập lịch
+threading.Thread(target=global_background_scheduler, daemon=True).start()
 
 def _rate_limited_scrape(url, session_dir, loop):
     """Cào 1 link với rate limiting để tránh bị chặn IP."""
@@ -453,8 +514,7 @@ def _rate_limited_scrape(url, session_dir, loop):
         return result
 
 def trigger_scrape_directly(spreadsheet_id, tab_name, row_index, url, matching_cfg=None, profile_name=None):
-    """Xử lý cào dữ liệu cho 1 link ngay lập tức."""
-    import threading
+    """Đưa yêu cầu cào dữ liệu cho 1 link vào hàng đợi tuần tự."""
     import asyncio
     import os
     
@@ -491,35 +551,54 @@ def trigger_scrape_directly(spreadsheet_id, tab_name, row_index, url, matching_c
     }
 
     def _run():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            from scraper.sheet_manager import update_row
-            result = _rate_limited_scrape(url, session_dir, loop)
-            
-            column_mapping = {
-                'status_col': final_cfg.get('status_col', 'C'),
-                'product_name_col': final_cfg.get('product_name_col', 'D'),
-                'current_price_col': final_cfg.get('current_price_col', 'E'),
-                'original_price_col': final_cfg.get('original_price_col', 'F'),
-                'sale_price_col': final_cfg.get('sale_price_col', 'G'),
-                'product_link_col': final_cfg.get('product_link_col', 'H'),
-                'shop_name_col': final_cfg.get('shop_name_col', 'I'),
-                'updated_at_col': final_cfg.get('updated_at_col', 'J'),
-                'note_col': final_cfg.get('note_col', 'K'),
-            }
-            
-            update_row(spreadsheet_id, tab_name, row_index, result, column_mapping)
-        except Exception as e:
-            print(f"Direct scrape error: {e}")
-        finally:
-            loop.close()
+        print(f"🔄 Bắt đầu xử lý link trong queue: {url}")
+        for attempt in range(3):
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                from scraper.sheet_manager import update_row
+                result = _rate_limited_scrape(url, session_dir, loop)
+                
+                if result.get('status') == 'Lỗi cần chạy lại':
+                    if attempt < 2:
+                        print(f"⚠️ Bị lỗi '{result.get('note')}'. Đang tắt trình duyệt và cào lại (lần {attempt+1}/3)...")
+                        loop.close()
+                        asyncio.set_event_loop(None)
+                        import time
+                        time.sleep(5)
+                        continue
+                    else:
+                        result['note'] = result.get('note', '').replace('(Đang tự động thử lại)', '(Đã thử 3 lần vẫn lỗi)')
+                
+                column_mapping = {
+                    'status_col': final_cfg.get('status_col', 'C'),
+                    'product_name_col': final_cfg.get('product_name_col', 'D'),
+                    'current_price_col': final_cfg.get('current_price_col', 'E'),
+                    'original_price_col': final_cfg.get('original_price_col', 'F'),
+                    'sale_price_col': final_cfg.get('sale_price_col', 'G'),
+                    'product_link_col': final_cfg.get('product_link_col', 'H'),
+                    'shop_name_col': final_cfg.get('shop_name_col', 'I'),
+                    'updated_at_col': final_cfg.get('updated_at_col', 'J'),
+                    'note_col': final_cfg.get('note_col', 'K'),
+                }
+                
+                update_row(spreadsheet_id, tab_name, row_index, result, column_mapping)
+                print(f"✅ Hoàn tất xử lý link: {url}")
+                break
+            except Exception as e:
+                print(f"❌ Lỗi khi xử lý link {url}: {e}")
+                break
+            finally:
+                if not loop.is_closed():
+                    loop.close()
+                asyncio.set_event_loop(None)
 
-    threading.Thread(target=_run).start()
+    # Đưa vào queue thay vì start Thread mới
+    _scrape_task_queue.put(_run)
+    print(f"📥 Đã đưa vào hàng đợi xử lý: {url}")
 
 def trigger_scrape_multiple_targets(url, targets, profile_name=None):
-    """Xử lý cào dữ liệu cho 1 link và cập nhật vào nhiều Sheet/Dòng cùng lúc."""
-    import threading
+    """Đưa yêu cầu cào dữ liệu cho 1 link (nhiều sheet) vào hàng đợi tuần tự."""
     import asyncio
     import os
     
@@ -529,47 +608,67 @@ def trigger_scrape_multiple_targets(url, targets, profile_name=None):
         session_dir = os.path.join(os.getcwd(), f"tiktok_session_{__import__('re').sub(r'[\\\\/:*?\"<>|]', '_', profile_name)}")
     
     def _run():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            from scraper.sheet_manager import update_row
-            
-            # Cào dữ liệu CHỈ 1 LẦN cho mỗi link (có rate limiting)
-            result = _rate_limited_scrape(url, session_dir, loop)
-            
-            # Cập nhật kết quả lên TẤT CẢ các sheet yêu cầu
-            for target in targets:
-                sheet_config = target.get('sheet_config', {})
-                spreadsheet_id = sheet_config.get('spreadsheet_id')
-                tab_name = sheet_config.get('tab_name')
-                row_index = target.get('row_index')
+        print(f"🔄 Bắt đầu xử lý link (multiple targets) trong queue: {url}")
+        for attempt in range(3):
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                from scraper.sheet_manager import update_row
                 
-                if not spreadsheet_id or not tab_name or not row_index:
-                    continue
-                    
-                column_mapping = {
-                    'status_col': sheet_config.get('status_col', 'C'),
-                    'product_name_col': sheet_config.get('product_name_col', 'D'),
-                    'current_price_col': sheet_config.get('current_price_col', 'E'),
-                    'original_price_col': sheet_config.get('original_price_col', 'F'),
-                    'sale_price_col': sheet_config.get('sale_price_col', 'G'),
-                    'product_link_col': sheet_config.get('product_link_col', 'H'),
-                    'shop_name_col': sheet_config.get('shop_name_col', 'I'),
-                    'updated_at_col': sheet_config.get('updated_at_col', 'J'),
-                    'note_col': sheet_config.get('note_col', 'K'),
-                }
+                # Cào dữ liệu CHỈ 1 LẦN cho mỗi link (có rate limiting)
+                result = _rate_limited_scrape(url, session_dir, loop)
                 
-                try:
-                    update_row(spreadsheet_id, tab_name, row_index, result, column_mapping)
-                except Exception as sheet_e:
-                    print(f"Error updating sheet {tab_name}: {sheet_e}")
+                if result.get('status') == 'Lỗi cần chạy lại':
+                    if attempt < 2:
+                        print(f"⚠️ Bị lỗi '{result.get('note')}'. Đang tắt trình duyệt và cào lại (lần {attempt+1}/3)...")
+                        loop.close()
+                        asyncio.set_event_loop(None)
+                        import time
+                        time.sleep(5)
+                        continue
+                    else:
+                        result['note'] = result.get('note', '').replace('(Đang tự động thử lại)', '(Đã thử 3 lần vẫn lỗi)')
+                
+                # Cập nhật kết quả lên TẤT CẢ các sheet yêu cầu
+                for target in targets:
+                    sheet_config = target.get('sheet_config', {})
+                    spreadsheet_id = sheet_config.get('spreadsheet_id')
+                    tab_name = sheet_config.get('tab_name')
+                    row_index = target.get('row_index')
                     
-        except Exception as e:
-            print(f"Direct multi-scrape error: {e}")
-        finally:
-            loop.close()
+                    if not spreadsheet_id or not tab_name or not row_index:
+                        continue
+                        
+                    column_mapping = {
+                        'status_col': sheet_config.get('status_col', 'C'),
+                        'product_name_col': sheet_config.get('product_name_col', 'D'),
+                        'current_price_col': sheet_config.get('current_price_col', 'E'),
+                        'original_price_col': sheet_config.get('original_price_col', 'F'),
+                        'sale_price_col': sheet_config.get('sale_price_col', 'G'),
+                        'product_link_col': sheet_config.get('product_link_col', 'H'),
+                        'shop_name_col': sheet_config.get('shop_name_col', 'I'),
+                        'updated_at_col': sheet_config.get('updated_at_col', 'J'),
+                        'note_col': sheet_config.get('note_col', 'K'),
+                    }
+                    
+                    try:
+                        update_row(spreadsheet_id, tab_name, row_index, result, column_mapping)
+                    except Exception as sheet_e:
+                        print(f"Error updating sheet {tab_name}: {sheet_e}")
+                        
+                print(f"✅ Hoàn tất xử lý link (multiple targets): {url}")
+                break
+            except Exception as e:
+                print(f"❌ Lỗi khi xử lý multi-target link {url}: {e}")
+                break
+            finally:
+                if not loop.is_closed():
+                    loop.close()
+                asyncio.set_event_loop(None)
 
-    threading.Thread(target=_run).start()
+    # Đưa vào queue thay vì start Thread mới
+    _scrape_task_queue.put(_run)
+    print(f"📥 Đã đưa vào hàng đợi xử lý (multiple targets): {url}")
 
 @app.route('/api/webhook/process-row', methods=['POST'])
 def api_webhook_process_row():
@@ -1019,9 +1118,12 @@ def api_get_sync_status():
 
 @app.route('/api/sync-force', methods=['POST'])
 def api_force_sync():
-    import threading
-    threading.Thread(target=favorites_syncer.sync_all_accounts_job).start()
-    return jsonify({'success': True, 'message': 'Đã yêu cầu đồng bộ tức thì.'})
+    global _is_sync_queued
+    if not favorites_syncer.sync_status.get("is_running") and not _is_sync_queued:
+        _is_sync_queued = True
+        _scrape_task_queue.put(_sync_wrapper)
+        return jsonify({'success': True, 'message': 'Đã đưa tác vụ đồng bộ vào hàng chờ. Sẽ chạy ngay khi tool rảnh.'})
+    return jsonify({'success': False, 'message': 'Đồng bộ đang chạy hoặc đã nằm trong hàng chờ.'})
 
 login_sessions = {}
 
@@ -1030,6 +1132,14 @@ def api_login_multi():
     profile_name = request.json.get('profile_name')
     if not profile_name:
         return jsonify({'success': False, 'message': 'Thiếu tên tài khoản.'})
+        
+    # Chuẩn hoá profile_name đồng bộ với favorites_syncer
+    if "tiktok.com" in profile_name:
+        parts = profile_name.split('@')
+        if len(parts) > 1:
+            username = parts[1].split('?')[0].split('/')[0]
+            profile_name = f"@{username}"
+    profile_name = "".join(c for c in profile_name if c.isalnum() or c in ('-', '_', '@'))
         
     session_dir = os.path.join(os.getcwd(), f"tiktok_session_{__import__('re').sub(r'[\\\\/:*?\"<>|]', '_', profile_name)}")
     print(f"🔑 Đang mở trình duyệt đăng nhập cho: {profile_name}")
@@ -1184,7 +1294,18 @@ def api_login_multi():
 @app.route('/api/login-multi-status', methods=['GET'])
 def api_login_multi_status():
     profile_name = request.args.get('profile_name')
-    if not profile_name or profile_name not in login_sessions:
+    if not profile_name:
+        return jsonify({'success': False, 'status': 'not_found'})
+        
+    # Chuẩn hoá profile_name đồng bộ với favorites_syncer
+    if "tiktok.com" in profile_name:
+        parts = profile_name.split('@')
+        if len(parts) > 1:
+            username = parts[1].split('?')[0].split('/')[0]
+            profile_name = f"@{username}"
+    profile_name = "".join(c for c in profile_name if c.isalnum() or c in ('-', '_', '@'))
+    
+    if profile_name not in login_sessions:
         return jsonify({'success': False, 'status': 'not_found'})
     
     return jsonify({
@@ -1202,6 +1323,14 @@ def api_login_reset():
     profile_name = request.json.get('profile_name')
     if not profile_name:
         return jsonify({'success': False, 'message': 'Thiếu tên tài khoản.'})
+        
+    # Chuẩn hoá profile_name đồng bộ với favorites_syncer
+    if "tiktok.com" in profile_name:
+        parts = profile_name.split('@')
+        if len(parts) > 1:
+            username = parts[1].split('?')[0].split('/')[0]
+            profile_name = f"@{username}"
+    profile_name = "".join(c for c in profile_name if c.isalnum() or c in ('-', '_', '@'))
         
     session_dir = os.path.join(os.getcwd(), f"tiktok_session_{__import__('re').sub(r'[\\\\/:*?\"<>|]', '_', profile_name)}")
     
@@ -1226,7 +1355,7 @@ def api_run_scraper(config_id):
     if config_id in processing_jobs and processing_jobs[config_id].get('running'):
         return jsonify({'success': False, 'message': 'Đang xử lý, vui lòng đợi.'})
     
-    # Initialize job status
+    # Khởi tạo trạng thái job
     processing_jobs[config_id] = {
         'running': True,
         'total': 0,
@@ -1235,15 +1364,16 @@ def api_run_scraper(config_id):
         'error': 0,
         'current_link': '',
         'started_at': datetime.now().isoformat(),
-        'log': []
+        'log': ['📥 Đã đưa tác vụ vào hàng đợi tập trung. Đang chờ đến lượt...']
     }
     
-    # Run in background thread
-    thread = threading.Thread(target=_run_scraper_thread, args=(config_id, config))
-    thread.daemon = True
-    thread.start()
+    # Đưa vào hàng đợi tập trung (thay vì chạy thread riêng song song)
+    def _queue_task():
+        _run_scraper_thread(config_id, config)
+        
+    _scrape_task_queue.put(_queue_task)
     
-    return jsonify({'success': True, 'message': 'Đã bắt đầu xử lý!'})
+    return jsonify({'success': True, 'message': 'Đã đưa vào hàng đợi xử lý tuần tự!'})
 
 
 @app.route('/api/run/<config_id>/status', methods=['GET'])
@@ -1279,7 +1409,7 @@ def _run_scraper_thread(config_id, config):
         
         # Tìm profile_name liên kết với config này để lấy session đăng nhập đúng
         profile_name = None
-        from scraper.favorites_syncer import load_sync_configs
+        from scraper.favorites_syncer import load_sync_configs, get_session_lock
         sync_configs = load_sync_configs()
         for sc in sync_configs:
             if sc.get('sheet_config_id') == config_id:
@@ -1287,9 +1417,16 @@ def _run_scraper_thread(config_id, config):
                 break
         
         session_dir = None
+        lock = None
         if profile_name:
             session_dir = os.path.join(os.getcwd(), f"tiktok_session_{__import__('re').sub(r'[\\\\/:*?\"<>|]', '_', profile_name)}")
             job['log'].append(f'🔑 Sử dụng session của nick: {profile_name}')
+            lock = get_session_lock(profile_name)
+            
+        if lock:
+            job['log'].append(f'⏳ Đang kiểm tra trạng thái và chờ khóa phiên làm việc...')
+            lock.acquire()
+            job['log'].append(f'🔒 Đã khóa phiên làm việc nick {profile_name} để tránh xung đột.')
         
         # Read links from sheet
         links_result = read_tiktok_links(spreadsheet_id, tab_name, link_col, status_col)
@@ -1309,53 +1446,142 @@ def _run_scraper_thread(config_id, config):
         
         job['log'].append(f'📋 Tìm thấy {len(links)} link cần xử lý.')
         
-        from concurrent.futures import ThreadPoolExecutor
+        job['log'].append(f'🚀 Bắt đầu xử lý song song tối đa 10 tabs với trình duyệt dùng chung...')
         
-        job['log'].append(f'🚀 Bắt đầu xử lý song song (Concurrency=5)...')
+        import asyncio
+        from playwright.async_api import async_playwright
+        from cloakbrowser import launch_persistent_context_async
+        from scraper.tiktok_scraper import scrape_tiktok_product, _cleanup_lock_files
         
-        def process_link_task(item):
-            if not job['running']:
-                return
+        async def run_all_links_async():
+            # UA mặc định và cấu hình giống hệt trong scraper
+            DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             
-            row = item['row']
-            url = item['link']
+            import platform
+            is_headless_env = os.environ.get("HEADLESS", "false").lower() == "true" or platform.system() != "Windows"
             
-            job['current_link'] = url
+            launch_kwargs = {
+                'headless': is_headless_env if is_headless_env else False,
+                'args': [
+                    '--disable-blink-features=AutomationControlled',
+                    '--no-sandbox',
+                    '--disable-gpu',
+                    '--disable-dev-shm-usage',
+                    '--no-first-run',
+                    '--force-device-scale-factor=1',
+                    '--use-gl=angle',
+                    '--use-gl=swiftshader',
+                    '--window-size=1280,800',
+                ],
+                'user_agent': DEFAULT_UA,
+                'viewport': {'width': 1280, 'height': 800},
+                'is_mobile': False,
+                'has_touch': False,
+                'locale': 'vi-VN',
+                'timezone_id': 'Asia/Ho_Chi_Minh',
+                'humanize': True
+            }
             
+            target_session_dir = session_dir or os.path.join(os.getcwd(), "tiktok_session")
+            
+            playwright_mgr = async_playwright()
+            p = await playwright_mgr.__aenter__()
+            
+            context = None
             try:
-                # Set status to "Đang xử lý"
-                set_row_status(spreadsheet_id, tab_name, row, status_col, 'Đang xử lý')
+                # 1. Dọn dẹp lock files cũ
+                _cleanup_lock_files(target_session_dir)
                 
-                # Scrape the link
-                try:
-                    result = loop.run_until_complete(scrape_tiktok_product(url, custom_session_dir=session_dir))
-                except Exception as e:
-                    result = {
-                        'status': 'Lỗi cần chạy lại',
-                        'note': f'Lỗi: {str(e)[:100]}',
-                    }
+                # 2. Khởi chạy browser context dùng chung
+                for attempt in range(2):
+                    try:
+                        context = await launch_persistent_context_async(user_data_dir=target_session_dir, **launch_kwargs)
+                        break
+                    except Exception as le:
+                        if attempt == 0:
+                            print(f"  ⚠️ Thử lại khởi chạy browser dùng chung ({le})...")
+                            _cleanup_lock_files(target_session_dir)
+                            await asyncio.sleep(2)
+                        else:
+                            raise le
+            except Exception as e:
+                job['log'].append(f'⚠️ Không thể khởi động trình duyệt dùng chung: {e}. Sẽ chạy chế độ không lưu session.')
+                context = None
                 
-                # Write result back to sheet
-                update_row(spreadsheet_id, tab_name, row, result, column_mapping)
-                
-                # Update job stats
-                job['processed'] += 1
-                if result.get('status') == 'Thành công':
-                    job['success'] += 1
-                    job['log'].append(f'  ✅ Dòng {row}: {result.get("product_name", "N/A")[:30]}')
-                else:
-                    job['error'] += 1
-                    job['log'].append(f'  ❌ Dòng {row}: {result.get("status", "Lỗi")}')
-                
-                # Keep log size manageable (last 50 entries)
-                if len(job['log']) > 50:
-                    job['log'] = job['log'][-50:]
-            finally:
-                loop.close()
+            # Block App Deep Links trên context dùng chung
+            if context:
+                async def block_redirects(route):
+                    url = route.request.url
+                    if url.startswith("snssdk") or url.startswith("intent") or "tiktokv.com/redirect" in url:
+                        await route.abort()
+                    else:
+                        await route.continue_()
+                await context.route("**/*", block_redirects)
 
-        # Run in parallel with a pool of workers - Reduced to 2 to save memory
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            executor.map(process_link_task, links)
+            if not context:
+                await playwright_mgr.__aexit__(None, None, None)
+                return
+
+            # Sử dụng Semaphore để giới hạn tối đa 5 tab chạy đồng thời (Tăng tốc độ)
+            sem = asyncio.Semaphore(5)
+            
+            async def process_one(item):
+                async with sem:
+                    if not job['running']:
+                        return
+                    
+                    row = item['row']
+                    url = item['link']
+                    
+                    job['current_link'] = url
+                    
+                    # Cập nhật trạng thái thành "Đang xử lý"
+                    set_row_status(spreadsheet_id, tab_name, row, status_col, 'Đang xử lý')
+                    
+                    # Gọi hàm scrape_tiktok_product với custom_context
+                    try:
+                        result = await scrape_tiktok_product(
+                            url, 
+                            custom_session_dir=session_dir, 
+                            custom_context=context
+                        )
+                    except Exception as e:
+                        result = {
+                            'status': 'Lỗi cần chạy lại',
+                            'note': f'Lỗi: {str(e)[:100]}',
+                        }
+                    
+                    # Ghi kết quả về Sheet
+                    update_row(spreadsheet_id, tab_name, row, result, column_mapping)
+                    
+                    # Cập nhật stats cho UI
+                    job['processed'] += 1
+                    if result.get('status') == 'Thành công':
+                        job['success'] += 1
+                        job['log'].append(f'  ✅ Dòng {row}: {result.get("product_name", "N/A")[:30]}')
+                    else:
+                        job['error'] += 1
+                        job['log'].append(f'  ❌ Dòng {row}: {result.get("status", "Lỗi")}')
+                    
+                    if len(job['log']) > 50:
+                        job['log'] = job['log'][-50:]
+
+            try:
+                # Chạy song song tất cả các link (giới hạn bởi Semaphore)
+                tasks = [process_one(item) for item in links]
+                await asyncio.gather(*tasks)
+            finally:
+                if context:
+                    await context.close()
+                await playwright_mgr.__aexit__(None, None, None)
+
+        # Chạy tiến trình đồng bộ trên event loop mới của thread
+        task_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(task_loop)
+        try:
+            task_loop.run_until_complete(run_all_links_async())
+        finally:
+            task_loop.close()
         
         # Update config last_run
         update_config(config_id, {
@@ -1368,6 +1594,12 @@ def _run_scraper_thread(config_id, config):
     except Exception as e:
         job['log'].append(f'❌ Lỗi nghiêm trọng: {str(e)}')
     finally:
+        if 'lock' in locals() and lock:
+            try:
+                lock.release()
+                print(f"🔓 Đã giải phóng lock phiên cho nick: {profile_name}")
+            except Exception as le:
+                print(f"⚠️ Lỗi giải phóng lock phiên: {le}")
         job['running'] = False
         job['current_link'] = ''
 

@@ -35,13 +35,38 @@ function renderSyncConfigs() {
                     Sheet Config ID: ${cfg.sheet_config_id}
                 </div>
             </div>
-            <div>
+            <div style="display: flex; gap: 4px;">
+                <button class="btn btn-primary btn-sm" onclick="loginSyncAccount('${cfg.profile_name}')">🔑 Đăng nhập</button>
                 <button class="btn btn-secondary btn-sm" onclick="toggleSyncConfig(${idx})">${cfg.active ? 'Tạm dừng' : 'Bật'}</button>
                 <button class="btn btn-danger btn-sm" onclick="deleteSyncConfig(${idx})">Xóa</button>
             </div>
         </div>`;
     });
     list.innerHTML = html;
+}
+
+async function loginSyncAccount(profileName) {
+    const resultDiv = document.getElementById('syncAddResult');
+    if (!resultDiv) return;
+    
+    resultDiv.innerHTML = `<span style="color:var(--accent)">⏳ Đang mở trình duyệt đăng nhập...</span>`;
+    
+    try {
+        const res = await fetch('/api/login-multi', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ profile_name: profileName })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            pollLoginStatus(profileName, null, resultDiv);
+        } else {
+            resultDiv.innerHTML = `<span style="color:var(--error)">❌ ${data.message}</span>`;
+        }
+    } catch (e) {
+        resultDiv.innerHTML = `<span style="color:var(--error)">❌ Lỗi kết nối server</span>`;
+    }
 }
 
 let loginPollInterval = null;

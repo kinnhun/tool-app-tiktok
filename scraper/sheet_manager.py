@@ -199,8 +199,17 @@ def read_tiktok_links(spreadsheet_id, tab_name, link_col, status_col, start_row=
         
         processable_statuses = ['', 'Chưa xử lý', 'Lỗi cần chạy lại', 'Cần cập nhật lại']
         
-        link_col_idx = ord(link_col.upper()) - 65
-        status_col_idx = ord(status_col.upper()) - 65
+        def _safe_col_to_idx(c, default_c):
+            c = str(c or default_c).strip().upper()
+            if not c: c = default_c.upper()
+            idx = 0
+            for char in c:
+                if 'A' <= char <= 'Z':
+                    idx = idx * 26 + (ord(char) - 64)
+            return max(0, idx - 1)
+
+        link_col_idx = _safe_col_to_idx(link_col, 'B')
+        status_col_idx = _safe_col_to_idx(status_col, 'C')
         
         links = []
         for row_idx, row in enumerate(all_values[start_row - 1:], start=start_row):
@@ -237,7 +246,16 @@ def get_sheet_stats(spreadsheet_id, tab_name, status_col, start_row=2):
         worksheet = spreadsheet.worksheet(tab_name)
         
         all_values = worksheet.get_all_values()
-        status_col_idx = ord(status_col.upper()) - 65
+        def _safe_col_to_idx(c, default_c):
+            c = str(c or default_c).strip().upper()
+            if not c: c = default_c.upper()
+            idx = 0
+            for char in c:
+                if 'A' <= char <= 'Z':
+                    idx = idx * 26 + (ord(char) - 64)
+            return max(0, idx - 1)
+
+        status_col_idx = _safe_col_to_idx(status_col, 'C')
         
         stats = {
             'total': 0,
@@ -675,8 +693,17 @@ def append_link(spreadsheet_id, tab_name, link, link_col, status_col, status="Ch
         
         # Determine how many columns to fill
         max_col_idx = 0
-        link_idx = ord(link_col.upper()) - 65
-        status_idx = ord(status_col.upper()) - 65
+        def _safe_col_to_idx(c, default_c):
+            c = str(c or default_c).strip().upper()
+            if not c: c = default_c.upper()
+            idx = 0
+            for char in c:
+                if 'A' <= char <= 'Z':
+                    idx = idx * 26 + (ord(char) - 64)
+            return max(0, idx - 1)
+
+        link_idx = _safe_col_to_idx(link_col, 'B')
+        status_idx = _safe_col_to_idx(status_col, 'C')
         max_col_idx = max(link_idx, status_idx)
         
         # Create a row with empty strings
@@ -713,8 +740,17 @@ def append_links_batch(spreadsheet_id, tab_name, links, link_col, status_col, st
             
         headers = all_values[0]
         
-        link_idx = ord(link_col.upper()) - 65
-        status_idx = ord(status_col.upper()) - 65
+        def _safe_col_to_idx(c, default_c='B'):
+            c = str(c or default_c).strip().upper()
+            if not c: c = default_c.upper()
+            idx = 0
+            for char in c:
+                if 'A' <= char <= 'Z':
+                    idx = idx * 26 + (ord(char) - 64)
+            return max(0, idx - 1)
+            
+        link_idx = _safe_col_to_idx(link_col, 'B')
+        status_idx = _safe_col_to_idx(status_col, 'C')
         max_col_idx = max(link_idx, status_idx)
         
         rows_to_append = []

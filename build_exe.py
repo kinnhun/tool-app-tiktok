@@ -19,7 +19,7 @@ def build():
     args = [
         'main.py',
         '--onefile',
-        '--name=TikTokScraper_v6.40',
+        '--name=TikTokScraper_v6.58',
         '--add-data=static;static',
         '--collect-all=playwright_stealth',
         '--hidden-import=playwright',

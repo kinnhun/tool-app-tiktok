@@ -29,6 +29,38 @@ def _cleanup_lock_files(session_dir):
     """Xóa các file lock của Chromium để tránh lỗi 'Target page' / 'Profile in use'."""
     if not session_dir or not os.path.exists(session_dir):
         return
+        
+    # Tiêu diệt các tiến trình Chrome ẩn đang giữ thư mục session này (trên Windows)
+    if sys.platform == 'win32':
+        import subprocess
+        # 1. Sử dụng PowerShell (luôn có sẵn trên Windows 10/11, thay thế wmic bị khai tử)
+        try:
+            folder_name = os.path.basename(os.path.normpath(session_dir))
+            if folder_name:
+                cmd = f"powershell -NoProfile -Command \"Get-CimInstance Win32_Process -Filter 'name = ''chrome.exe''' | Where-Object {{ $_.CommandLine -like '*{folder_name}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}\""
+                subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+            
+        # 2. Dự phòng bằng wmic (nếu PowerShell không chạy được)
+        try:
+            output = subprocess.check_output(
+                'wmic process where "name=\'chrome.exe\'" get processid,commandline', 
+                shell=True, stderr=subprocess.DEVNULL
+            ).decode('utf-8', errors='ignore')
+            
+            normalized_session = os.path.normpath(session_dir).lower()
+            for line in output.splitlines():
+                line_lower = line.lower()
+                if normalized_session in line_lower:
+                    parts = line.strip().split()
+                    if parts:
+                        pid = parts[-1]
+                        if pid.isdigit():
+                            subprocess.run(['taskkill', '/F', '/PID', pid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            print(f"🧹 Đã tiêu diệt zombie Chrome (PID: {pid}) đang giữ lock.")
+        except Exception:
+            pass
     
     lock_files = ["SingletonLock", "SingletonCookie", "SingletonSocket"]
     for lock_name in lock_files:
@@ -296,12 +328,20 @@ async def close_global_browser():
 _cached_cookies_dict = {} # dict mapping session_dir to (cookies, time)
 _cookie_lock = threading.Lock()
 
-async def _get_session_cookies(custom_session_dir=None):
+async def _get_session_cookies(custom_session_dir=None, custom_context=None):
     """Get cookies from Playwright persistent context with thread-safe caching.
     Nếu chưa đăng nhập (không có thư mục session), trả về [] để curl_cffi tự hoạt động không cần cookie.
     """
     global _cached_cookies_dict
     
+    # Nếu đã có custom_context đang chạy, lấy trực tiếp cookie cực kỳ nhanh và tránh lock
+    if custom_context:
+        try:
+            cookies = await custom_context.cookies()
+            return cookies
+        except Exception as e:
+            print(f"  ⚠️ Không thể lấy cookie từ custom_context: {e}")
+            
     # Sử dụng folder được chỉ định hoặc folder mặc định
     target_session_dir = custom_session_dir or SESSION_DIR
     
@@ -516,6 +556,22 @@ def _extract_pdp_via_requests(product_url, session):
                     return details
             except Exception as e:
                 print(f"  ⚠ Lỗi parse ROUTER_DATA: {e}")
+                
+        # ─── Strategy 1.5: Parse __UNIVERSAL_DATA_FOR_REHYDRATION__ (alternative source) ───
+        if not details.get('current_price'):
+            uni_match = re.search(
+                r'id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>\s*({.+?})\s*</script>',
+                html, re.DOTALL
+            )
+            if uni_match:
+                try:
+                    uni_data = json.loads(uni_match.group(1))
+                    details = _parse_router_data(uni_data, details, expected_name, product_id)
+                    if details.get('current_price') or details.get('sale_price'):
+                        print(f"  ✅ Lấy được dữ liệu sạch từ __UNIVERSAL_DATA_FOR_REHYDRATION__ (API)")
+                        return details
+                except Exception as e:
+                    print(f"  ⚠ Lỗi parse UNIVERSAL_DATA: {e}")
         
         # Strategy 2 (DISABLED)
         # details = _parse_prices_from_html(html, details)
@@ -551,7 +607,7 @@ def _clean_tiktok_image_url(url):
 def _parse_router_data(router_data, details, expected_name="", target_product_id=""):
     """Parse product info from __MODERN_ROUTER_DATA__ JSON."""
     try:
-        loader_data = router_data.get('loaderData', {})
+        loader_data = router_data.get('loaderData') or router_data
         
         product_model = {}
         product_info = {}
@@ -1106,9 +1162,32 @@ def _extract_pdp_url_from_video(url):
 
 # ─── Main Scraper ─────────────────────────────────────────────────
 
-async def scrape_tiktok_product(url, playwright_instance=None, custom_session_dir=None):
+async def scrape_tiktok_product(url, playwright_instance=None, custom_session_dir=None, custom_context=None):
     """
-    Scrape product information from a TikTok video.
+    Scrape product information from a TikTok video with session lock.
+    """
+    import os
+    target_session_dir = custom_session_dir or SESSION_DIR
+    
+    # Trích xuất lock an toàn bằng đường dẫn session
+    lock = None
+    try:
+        from scraper.favorites_syncer import get_session_lock
+        if target_session_dir:
+            lock = get_session_lock(target_session_dir)
+    except Exception as e:
+        print(f"  ⚠ Không thể lấy session lock: {e}")
+
+    if lock:
+        with lock:
+            return await _scrape_tiktok_product_internal(url, playwright_instance, custom_session_dir, custom_context)
+    else:
+        return await _scrape_tiktok_product_internal(url, playwright_instance, custom_session_dir, custom_context)
+
+
+async def _scrape_tiktok_product_internal(url, playwright_instance=None, custom_session_dir=None, custom_context=None):
+    """
+    Internal function to scrape product information from a TikTok video.
     """
     target_session_dir = custom_session_dir or SESSION_DIR
     
@@ -1140,7 +1219,7 @@ async def scrape_tiktok_product(url, playwright_instance=None, custom_session_di
         result['shop_name'] = url_shop_name
     
     # Get session cookies for requests
-    cookies = await _get_session_cookies(custom_session_dir=target_session_dir)
+    cookies = await _get_session_cookies(custom_session_dir=target_session_dir, custom_context=custom_context)
     session = _build_requests_session(cookies)
     
     # Determine if URL is a PDP or video link
@@ -1193,57 +1272,71 @@ async def scrape_tiktok_product(url, playwright_instance=None, custom_session_di
         print(f"  → Requests không lấy được giá ({result['note']}), thử Playwright fallback...")
     
     # ─── Step 3: Playwright Fallback (Highly Optimized) ───
-    with _browser_lock:
+    class DummyLock:
+        def __enter__(self): return self
+        def __exit__(self, exc_type, exc_val, exc_tb): pass
+        
+    lock_to_use = DummyLock() if custom_context else _browser_lock
+    with lock_to_use:
         print(f"  ⚡ Đang dùng Playwright ngầm (Siêu tốc)...")
         
         from cloakbrowser import launch_persistent_context_async
         
         context = None
+        is_reused_context = False
+        page = None
         try:
-            # Launch with extreme optimization
-            import platform
-            import os
-            is_headless_env = os.environ.get("HEADLESS", "false").lower() == "true" or platform.system() != "Windows"
+            if custom_context:
+                context = custom_context
+                is_reused_context = True
+            else:
+                # Launch with extreme optimization
+                import platform
+                import os
+                is_headless_env = os.environ.get("HEADLESS", "false").lower() == "true" or platform.system() != "Windows"
+                
+                launch_kwargs = {
+                    'headless': is_headless_env if is_headless_env else False,
+                    'args': [
+                        '--disable-blink-features=AutomationControlled',
+                        '--no-sandbox',
+                        '--disable-gpu',
+                        '--disable-dev-shm-usage',
+                        '--no-first-run',
+                        '--force-device-scale-factor=1',
+                        '--use-gl=angle',
+                        '--use-gl=swiftshader',
+                        '--window-size=1280,800',
+                    ],
+                    'user_agent': DEFAULT_UA,
+                    'viewport': {'width': 1280, 'height': 800},
+                    'is_mobile': False,
+                    'has_touch': False,
+                    'locale': 'vi-VN',
+                    'timezone_id': 'Asia/Ho_Chi_Minh',
+                    'humanize': True
+                }
+                
+                # Cleanup before launch
+                _cleanup_lock_files(target_session_dir)
+                
+                # Retry loop for launch (fix Target page error)
+                for attempt in range(2):
+                    try:
+                        context = await launch_persistent_context_async(user_data_dir=target_session_dir, **launch_kwargs)
+                        break
+                    except Exception as le:
+                        if attempt == 0:
+                            print(f"  ⚠️ Thử lại khởi chạy browser ({le})...")
+                            _cleanup_lock_files(target_session_dir)
+                            await asyncio.sleep(2)
+                        else:
+                            raise le
             
-            launch_kwargs = {
-                'headless': is_headless_env if is_headless_env else False,
-                'args': [
-                    '--disable-blink-features=AutomationControlled',
-                    '--no-sandbox',
-                    '--disable-gpu',
-                    '--disable-dev-shm-usage',
-                    '--no-first-run',
-                    '--force-device-scale-factor=1',
-                    '--use-gl=angle',
-                    '--use-gl=swiftshader',
-                    '--window-size=1280,800',
-                ],
-                'user_agent': DEFAULT_UA,
-                'viewport': {'width': 1280, 'height': 800},
-                'is_mobile': False,
-                'has_touch': False,
-                'locale': 'vi-VN',
-                'timezone_id': 'Asia/Ho_Chi_Minh',
-                'humanize': True
-            }
-            
-            # Cleanup before launch
-            _cleanup_lock_files(target_session_dir)
-            
-            # Retry loop for launch (fix Target page error)
-            for attempt in range(2):
-                try:
-                    context = await launch_persistent_context_async(user_data_dir=target_session_dir, **launch_kwargs)
-                    break
-                except Exception as le:
-                    if attempt == 0:
-                        print(f"  ⚠️ Thử lại khởi chạy browser ({le})...")
-                        _cleanup_lock_files(target_session_dir)
-                        await asyncio.sleep(2)
-                    else:
-                        raise le
-            
-            page = context.pages[0] if context.pages else await context.new_page()
+            if is_reused_context:
+                page = await context.new_page()
+            else:
+                page = context.pages[0] if context.pages else await context.new_page()
             
             # Block App Deep Links
             async def block_redirects(route):
@@ -1306,8 +1399,39 @@ async def scrape_tiktok_product(url, playwright_instance=None, custom_session_di
             print(f"  🔍 Đang quét: {target_url[:60]}...")
             
             # Use a smaller timeout for speed
-            await page.goto(target_url, timeout=35000, wait_until='domcontentloaded')
+            try:
+                await page.goto(target_url, timeout=35000, wait_until='domcontentloaded')
+            except Exception as nav_err:
+                if 'ERR_HTTP_RESPONSE_CODE_FAILURE' in str(nav_err) or 'ERR_CONNECTION' in str(nav_err) or 'ERR_ABORTED' in str(nav_err):
+                    print(f"  ⚠️ Lỗi mạng nghiêm trọng ({str(nav_err)[:30]}). Chuyển sang chế độ chạy lại.")
+                    if context and not is_reused_context:
+                        await context.close()
+                    try:
+                        import shutil
+                        for folder in ["Default/Cache", "Default/Code Cache", "Default/GPUCache", "Default/Network"]:
+                            path = os.path.join(target_session_dir, folder)
+                            if os.path.exists(path):
+                                shutil.rmtree(path, ignore_errors=True)
+                        print("  🧹 Đã xóa Cache bị hỏng để khắc phục lỗi HTTP_RESPONSE_CODE_FAILURE.")
+                    except: pass
+                    result['status'] = 'Lỗi cần chạy lại'
+                    result['note'] = 'Lỗi mạng khi tải trang (Đang tự động thử lại)'
+                    return result
+                else:
+                    print(f"  ⚠️ Bỏ qua lỗi Timeout/Goto phụ: {nav_err}")
             await asyncio.sleep(2)
+            
+            # GIẢI CAPTCHA NGAY LẬP TỨC nếu xuất hiện ngay khi tải trang (ví dụ khi vào trang cá nhân)
+            temp_content = await page.content()
+            if 'captcha' in temp_content.lower() or 'Security Check' in temp_content or await page.query_selector('#captcha_container, .captcha_verify_container, [id^="secsdk"]'):
+                print("  ⚠️ Gặp CAPTCHA ngay khi tải trang! Đang giải quyết...")
+                from scraper.captcha_solver import solve_captcha_with_retry
+                bypassed_early = await solve_captcha_with_retry(page, max_retries=3)
+                if bypassed_early:
+                    print("  ✅ Đã giải CAPTCHA thành công ngay lập tức!")
+                    await asyncio.sleep(3)
+                else:
+                    print("  ❌ Giải CAPTCHA thất bại ngay khi tải trang.")
             
             page_content = await page.content()
             
@@ -1545,6 +1669,20 @@ async def scrape_tiktok_product(url, playwright_instance=None, custom_session_di
                                         await asyncio.sleep(2)
                                 except Exception as nav_err:
                                     print(f"  ⚠️ Lỗi navigate PDP: {nav_err}")
+                                    if 'ERR_HTTP_RESPONSE_CODE_FAILURE' in str(nav_err) or 'ERR_CONNECTION' in str(nav_err) or 'ERR_ABORTED' in str(nav_err):
+                                        if context and not is_reused_context:
+                                            await context.close()
+                                        try:
+                                            import shutil
+                                            for folder in ["Default/Cache", "Default/Code Cache", "Default/GPUCache", "Default/Network"]:
+                                                path = os.path.join(target_session_dir, folder)
+                                                if os.path.exists(path):
+                                                    shutil.rmtree(path, ignore_errors=True)
+                                            print("  🧹 Đã xóa Cache bị hỏng để khắc phục lỗi HTTP_RESPONSE_CODE_FAILURE.")
+                                        except: pass
+                                        result['status'] = 'Lỗi cần chạy lại'
+                                        result['note'] = 'Lỗi mạng khi tải trang PDP (Đang tự động thử lại)'
+                                        return result
                         
                         # Lấy nội dung cuối cùng
                         new_content = await page.content()
@@ -1576,6 +1714,17 @@ async def scrape_tiktok_product(url, playwright_instance=None, custom_session_di
                         print("  ❌ Auto-bypass CAPTCHA thất bại. Sẽ tự động thử lại ở chu kỳ tiếp theo.")
                         result['note'] = 'Bị CAPTCHA (Đang tự động thử lại)'
                         result['status'] = 'Lỗi cần chạy lại'
+                        if context and not is_reused_context:
+                            await context.close()
+                        try:
+                            import shutil
+                            for folder in ["Default/Cache", "Default/Code Cache", "Default/GPUCache", "Default/Network"]:
+                                path = os.path.join(target_session_dir, folder)
+                                if os.path.exists(path):
+                                    shutil.rmtree(path, ignore_errors=True)
+                            print("  🧹 Đã xóa Cache trình duyệt sau khi dính CAPTCHA để lần thử sau sạch sẽ hơn.")
+                        except: pass
+                        return result
                 elif not result.get('qr_b64'):
                     if not pdp_url:
                         result['status'] = 'Lỗi'
@@ -1587,7 +1736,13 @@ async def scrape_tiktok_product(url, playwright_instance=None, custom_session_di
             print(f"  ⚠ Lỗi trình duyệt ngầm: {e}")
             result['note'] = f'Lỗi hệ thống: {str(e)[:50]}'
         finally:
-            if context: await context.close()
+            if page and is_reused_context:
+                try:
+                    await page.close()
+                except:
+                    pass
+            if context and not is_reused_context:
+                await context.close()
         
         return result
 
