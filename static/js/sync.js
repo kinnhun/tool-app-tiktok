@@ -239,10 +239,126 @@ async function loadSyncStatus() {
     }
 }
 
+let currentSyncEnabled = true;
+let currentSyncInterval = 600;
+
+async function loadQueueStatus() {
+    try {
+        const res = await fetch('/api/queue-status');
+        const data = await res.json();
+        if (!data.success) return;
+        
+        currentSyncEnabled = data.sync_enabled !== false;
+        currentSyncInterval = data.sync_interval_seconds || 600;
+        
+        // Cập nhật nút bật/tắt quét ngầm
+        const btnToggle = document.getElementById('btnToggleAutoSync');
+        if (btnToggle) {
+            if (currentSyncEnabled) {
+                btnToggle.className = 'btn btn-secondary btn-sm';
+                btnToggle.innerText = '⏸ Tạm dừng quét ngầm';
+            } else {
+                btnToggle.className = 'btn btn-success btn-sm';
+                btnToggle.innerText = '▶️ Bật quét ngầm';
+            }
+        }
+        
+        const selInterval = document.getElementById('syncIntervalSelect');
+        if (selInterval && selInterval.value != currentSyncInterval) {
+            selInterval.value = currentSyncInterval;
+        }
+        
+        // Cập nhật huy hiệu trạng thái
+        const qSize = data.queue_size || 0;
+        const isBusy = data.is_busy;
+        const activeJobs = data.active_jobs || [];
+        
+        let statusText = '🟢 Rảnh rỗi';
+        let badgeClass = 'badge badge-success';
+        let detailText = `Hàng đợi: ${qSize} task chờ | Quét ngầm: ${currentSyncEnabled ? 'Đang bật (' + Math.round(currentSyncInterval/60) + ' phút/lần)' : 'Đã tắt'}`;
+        
+        if (isBusy || activeJobs.length > 0) {
+            statusText = '🟡 Đang xử lý';
+            badgeClass = 'badge badge-warning';
+            if (activeJobs.length > 0) {
+                const j = activeJobs[0];
+                detailText = `Đang cào sản phẩm: ${j.processed}/${j.total} link | ${qSize} task trong hàng đợi`;
+            } else {
+                detailText = `Hệ thống đang bận | ${qSize} task trong hàng đợi`;
+            }
+        }
+        
+        // Huy hiệu ở tab Auto-Sync
+        const queueBadge = document.getElementById('queueBadge');
+        if (queueBadge) {
+            queueBadge.className = badgeClass;
+            queueBadge.innerText = statusText;
+        }
+        const queueDetail = document.getElementById('queueDetailText');
+        if (queueDetail) {
+            queueDetail.innerText = detailText;
+        }
+        
+        // Thanh hàng đợi ở Dashboard
+        const dashBadge = document.getElementById('dashQueueStatusBadge');
+        if (dashBadge) {
+            dashBadge.className = badgeClass;
+            dashBadge.innerText = statusText;
+        }
+        const dashInfo = document.getElementById('dashQueueInfo');
+        if (dashInfo) {
+            dashInfo.innerText = `(${qSize} tác vụ trong hàng đợi)`;
+        }
+        const dashSyncText = document.getElementById('dashSyncText');
+        if (dashSyncText) {
+            dashSyncText.innerText = currentSyncEnabled ? `Đang bật (${Math.round(currentSyncInterval/60)} phút)` : 'Đã tắt';
+            dashSyncText.style.color = currentSyncEnabled ? 'var(--success)' : 'var(--error)';
+        }
+    } catch (e) {
+        // silent
+    }
+}
+
+async function toggleAutoSync() {
+    try {
+        const res = await fetch('/api/sync-control', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ enabled: !currentSyncEnabled })
+        });
+        const data = await res.json();
+        if (data.success) {
+            loadQueueStatus();
+        }
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+async function changeSyncInterval(val) {
+    try {
+        const res = await fetch('/api/sync-control', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ interval_seconds: parseInt(val) })
+        });
+        const data = await res.json();
+        if (data.success) {
+            loadQueueStatus();
+        }
+    } catch (e) {
+        console.error(e);
+    }
+}
+
 // Hook into existing app.js functions if possible, or setup interval
 document.addEventListener('DOMContentLoaded', () => {
     loadSyncConfigs();
     loadAvailableSheetConfigs();
+    loadQueueStatus();
+    
+    // Theo dõi hàng đợi định kỳ mỗi 3 giây
+    setInterval(loadQueueStatus, 3000);
     
     // Auto refresh logs if section is active
     setInterval(() => {
@@ -271,3 +387,4 @@ async function loadAvailableSheetConfigs() {
         console.error("Lỗi tải danh sách cấu hình", e);
     }
 }
+

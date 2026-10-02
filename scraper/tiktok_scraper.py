@@ -16,6 +16,34 @@ from urllib.parse import urlparse, unquote
 if getattr(sys, 'frozen', False):
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright")
 
+# Tự động gán đường dẫn Chromium thực tế cho CloakBrowser để tránh lỗi crash nhị phân mặc định
+if not os.environ.get("CLOAKBROWSER_BINARY_PATH"):
+    candidates = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright\chromium-1243\chrome-win64\chrome.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright\chromium-1200\chrome-win64\chrome.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright\chromium-1148\chrome-win\chrome.exe"),
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            os.environ["CLOAKBROWSER_BINARY_PATH"] = p
+            break
+
+# Force utf-8 encoding for stdout/stderr to avoid crash on windows with emojis
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 # Xác định thư mục lưu session TikTok (Tương thích hoàn hảo với PyInstaller)
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.getcwd()
@@ -24,6 +52,7 @@ else:
 
 SESSION_DIR = os.path.join(BASE_DIR, "tiktok_session")
 DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+_browser_lock = threading.RLock()
 
 def _cleanup_lock_files(session_dir):
     """Xóa các file lock của Chromium để tránh lỗi 'Target page' / 'Profile in use'."""
@@ -303,8 +332,6 @@ def _extract_shop_name_from_url(url):
 _global_playwright = None
 # ─── Browser Management ───────────────────────────────────────────
 
-_browser_lock = threading.Lock()
-
 
 def _cleanup_browser_data():
     """Dọn dẹp dữ liệu thừa để tiết kiệm dung lượng."""
@@ -552,6 +579,8 @@ def _extract_pdp_via_requests(product_url, session):
                 # Verify we actually got the right product by checking if names roughly match
                 # if we have an expected name
                 if details.get('current_price') or details.get('sale_price'):
+                    if not details.get('product_images'):
+                        details = _parse_prices_from_html(html, details)
                     print(f"  ✅ Lấy được dữ liệu sạch từ __MODERN_ROUTER_DATA__ (API)")
                     return details
             except Exception as e:
@@ -568,14 +597,16 @@ def _extract_pdp_via_requests(product_url, session):
                     uni_data = json.loads(uni_match.group(1))
                     details = _parse_router_data(uni_data, details, expected_name, product_id)
                     if details.get('current_price') or details.get('sale_price'):
+                        if not details.get('product_images'):
+                            details = _parse_prices_from_html(html, details)
                         print(f"  ✅ Lấy được dữ liệu sạch từ __UNIVERSAL_DATA_FOR_REHYDRATION__ (API)")
                         return details
                 except Exception as e:
                     print(f"  ⚠ Lỗi parse UNIVERSAL_DATA: {e}")
         
-        # Strategy 2 (DISABLED)
-        # details = _parse_prices_from_html(html, details)
-
+        # Strategy 2: Parse from HTML if price or images still missing
+        if not details.get('current_price') or not details.get('product_images'):
+            details = _parse_prices_from_html(html, details)
         
         if not details.get('current_price'):
             details['note'] = 'Không tìm thấy dữ liệu sản phẩm trong JSON (API)'
@@ -593,13 +624,17 @@ def _extract_pdp_via_requests(product_url, session):
 
 def _clean_tiktok_image_url(url):
     """Chuyển ảnh TikTok sang JPEG để tương thích với Google Sheet (vì Sheet không hỗ trợ WEBP/AVIF)."""
-    if not url: return ""
+    if not url or not isinstance(url, str): return ""
     import re
     # Xóa các query parameter (?...)
-    url = url.split('?')[0]
-    # Đổi định dạng từ .webp, .avif sang .jpeg để Google Sheet có thể hiển thị
+    url = url.split('?')[0].strip()
+    if not url.startswith('http'):
+        return ""
+    # Chuyển đổi định dạng template TikTok từ webp sang jpeg để CDN trả về ảnh JPEG thật
+    url = url.replace('resize-webp', 'resize-jpeg').replace('origin-webp', 'origin-jpeg')
+    # Đổi phần mở rộng file từ .webp, .avif sang .jpeg
     url = re.sub(r'\.(?:webp|avif)$', '.jpeg', url, flags=re.IGNORECASE)
-    # Một số URL không có đuôi, nhưng có tham số tplv-obj. ta có thể ép đuôi .jpeg vào
+    # Nếu URL chưa có đuôi ảnh hợp lệ, gắn đuôi .jpeg để Google Sheets nhận diện
     if not re.search(r'\.(?:jpg|jpeg|png|gif)$', url, re.IGNORECASE):
         url = url + ".jpeg"
     return url
@@ -618,15 +653,38 @@ def _parse_router_data(router_data, details, expected_name="", target_product_id
         # Hàm đệ quy để tìm TẤT CẢ product_model sâu bên trong
         def find_all_product_models(data):
             if isinstance(data, dict):
-                if 'product_model' in data and isinstance(data['product_model'], dict) and 'name' in data['product_model']:
-                    all_models.append((data['product_model'], data))
-                
-                if 'name' in data and ('skus' in data or 'price' in data) and 'images' in data:
-                    all_models.append((data, data))
-                
+                # 1. Cấu trúc TikTok Shop hiện đại: component_data -> product_info
                 if 'component_data' in data and isinstance(data['component_data'], dict):
-                    if 'product_info' in data['component_data'] and 'product_model' in data['component_data']['product_info']:
-                        all_models.append((data['component_data']['product_info']['product_model'], data['component_data']))
+                    comp = data['component_data']
+                    p_info = comp.get('product_info')
+                    if isinstance(p_info, dict):
+                        if not p_info.get('name') and p_info.get('title'):
+                            p_info['name'] = p_info['title']
+                        pm = p_info.get('product_model')
+                        if isinstance(pm, dict):
+                            for k in ['product_id', 'seller_id', 'id']:
+                                if k in pm and k not in p_info:
+                                    p_info[k] = pm[k]
+                        if p_info.get('name'):
+                            all_models.append((p_info, comp))
+                
+                # 2. Cấu trúc product_model chuẩn hoặc cũ
+                if 'product_model' in data and isinstance(data['product_model'], dict):
+                    pm = data['product_model']
+                    pm_name = pm.get('name') or pm.get('title') or data.get('name') or data.get('title')
+                    if pm_name:
+                        pm['name'] = pm_name
+                        if not pm.get('images') and data.get('images'):
+                            pm['images'] = data['images']
+                        all_models.append((pm, data))
+                
+                # 3. Bất kỳ đối tượng dict nào chứa thông tin sản phẩm (name/title + price/skus/images)
+                title_or_name = data.get('name') or data.get('title')
+                if title_or_name and isinstance(title_or_name, str) and len(title_or_name.strip()) > 3:
+                    if any(k in data for k in ['price', 'skus', 'images', 'image_list', 'gallery_images', 'product_id']):
+                        if not data.get('name'):
+                            data['name'] = title_or_name
+                        all_models.append((data, data))
 
                 for key, val in data.items():
                     find_all_product_models(val)
@@ -639,10 +697,13 @@ def _parse_router_data(router_data, details, expected_name="", target_product_id
         if not all_models:
             return details
             
-        # Lọc các model hợp lệ (chỉ cần có name)
+        # Lọc các model hợp lệ (chỉ cần có name hoặc title)
         valid_models = []
         for model, info in all_models:
-            if model.get('name'):
+            m_name = model.get('name') or model.get('title')
+            if m_name:
+                if not model.get('name'):
+                    model['name'] = m_name
                 valid_models.append((model, info))
                 
         if not valid_models:
@@ -656,8 +717,12 @@ def _parse_router_data(router_data, details, expected_name="", target_product_id
         # 1. Ưu tiên tuyệt đối theo Product ID
         if target_product_id:
             for model, info in valid_models:
-                p_id = str(model.get('product_id', '') or model.get('id', ''))
-                if p_id == target_product_id:
+                p_id = str(model.get('product_id', '') or model.get('id', '') or '')
+                if not p_id and isinstance(model.get('product_model'), dict):
+                    p_id = str(model['product_model'].get('product_id', ''))
+                if not p_id and isinstance(info, dict):
+                    p_id = str(info.get('product_id', ''))
+                if p_id == str(target_product_id):
                     product_model, product_info = model, info
                     print(f"  ✅ Khớp Product ID: {target_product_id}")
                     break
@@ -677,8 +742,19 @@ def _parse_router_data(router_data, details, expected_name="", target_product_id
                     highest_sim = sim
                     best_match = (model, info)
                     
-            if best_match:
+            if best_match and highest_sim > 0:
                 product_model, product_info = best_match
+        
+        # 3. Nếu vẫn chưa có product_model, lấy model tốt nhất (ưu tiên có giá và ảnh)
+        if not product_model and valid_models:
+            for model, info in valid_models:
+                has_pr = model.get('price') or model.get('skus') or (isinstance(info, dict) and info.get('price'))
+                has_im = model.get('images') or model.get('image_list') or (isinstance(info, dict) and info.get('images'))
+                if has_pr and has_im:
+                    product_model, product_info = model, info
+                    break
+            if not product_model:
+                product_model, product_info = valid_models[0]
         
         if not product_model:
             return details
@@ -690,7 +766,27 @@ def _parse_router_data(router_data, details, expected_name="", target_product_id
             details['product_name'] = product_model['name']
         
         # ─── Price Extraction (Advanced) ───
-        promotion_model = product_info.get('promotion_model', {})
+        # 1. Ưu tiên giá hiển thị thực tế (real_price) từ price object của product_info/product_model
+        direct_price = product_info.get('price') if isinstance(product_info, dict) else {}
+        if not direct_price and isinstance(product_model, dict):
+            direct_price = product_model.get('price', {})
+        if not direct_price and isinstance(product_info, dict) and isinstance(product_info.get('product_info'), dict):
+            direct_price = product_info['product_info'].get('price', {})
+            
+        if isinstance(direct_price, dict):
+            real_val = direct_price.get('real_price') or direct_price.get('min_sku_price') or direct_price.get('min_price')
+            orig_val = direct_price.get('original_price') or direct_price.get('min_sku_original_price') or direct_price.get('max_price')
+            disc_val = direct_price.get('discount') or direct_price.get('discount_rate')
+            if real_val:
+                details['sale_price'] = _format_tiktok_price(real_val)
+                details['current_price'] = details['sale_price']
+                found_price = True
+            if orig_val:
+                details['original_price'] = _format_tiktok_price(orig_val)
+            if disc_val and not details.get('note'):
+                details['note'] = str(disc_val)
+
+        promotion_model = product_info.get('promotion_model', {}) if isinstance(product_info, dict) else {}
         if not promotion_model:
             # Try to find promotion_model in loader_data if not in product_info
             def find_promotion_model(data):
@@ -712,25 +808,24 @@ def _parse_router_data(router_data, details, expected_name="", target_product_id
         discount_rate = None
         
         # Thử tìm skus trong nhiều vị trí khác nhau của JSON
-        skus = product_model.get('skus') or product_info.get('skus')
-        if not skus:
-            # TikTok mới thường để skus trong component_data -> product_info -> skus
+        skus = product_model.get('skus') if isinstance(product_model, dict) else None
+        if not skus and isinstance(product_info, dict):
+            skus = product_info.get('skus')
+        if not skus and isinstance(product_info, dict):
             p_info = product_info.get('product_info') or product_info
-            skus = p_info.get('skus', [])
+            if isinstance(p_info, dict):
+                skus = p_info.get('skus', [])
             
         if skus and len(skus) > 0:
-            # Ưu tiên SKU đầu tiên hoặc SKU có giá thấp nhất
             price_info = skus[0].get('price', {})
-            sku_original_price = price_info.get('original_price') or price_info.get('original_price_decimal')
-            sku_sale_price = price_info.get('sale_price') or price_info.get('sale_price_decimal')
-            discount_rate = price_info.get('discount_rate') or price_info.get('discount')
+            sku_original_price = price_info.get('origin_price_format') or price_info.get('original_price') or price_info.get('origin_price_decimal') or price_info.get('original_price_decimal')
+            sku_sale_price = price_info.get('sale_price_format') or price_info.get('sale_price') or price_info.get('sale_price_decimal')
+            discount_rate = price_info.get('discount_format') or price_info.get('discount_rate') or price_info.get('discount')
             if not discount_rate:
-                 # Thử tìm trong promotion_info của SKU
                  promo_info = skus[0].get('promotion_info', {})
-                 discount_rate = promo_info.get('discount_rate') or promo_info.get('discount')
+                 discount_rate = promo_info.get('discount_format') or promo_info.get('discount_rate') or promo_info.get('discount')
 
-        # Nếu vẫn không thấy discount_rate, quét toàn bộ product_info
-        if not discount_rate:
+        if not discount_rate and isinstance(product_info, dict):
             def _deep_find_key(obj, key):
                 if isinstance(obj, dict):
                     if key in obj: return obj[key]
@@ -744,87 +839,42 @@ def _parse_router_data(router_data, details, expected_name="", target_product_id
                 return None
             discount_rate = _deep_find_key(product_info, 'discount_rate') or _deep_find_key(product_info, 'discount')
 
-        promotion_model = product_info.get('promotion_model') or {}
-        if not promotion_model and 'product_info' in product_info:
-             promotion_model = product_info['product_info'].get('promotion_model', {})
-             
-        promo_price_info = promotion_model.get('promotion_product_price', {}).get('min_price', {})
-        if promo_price_info:
-            sale_decimal = promo_price_info.get('sale_price_decimal')
-            origin_decimal = promo_price_info.get('origin_price_decimal')
-            # Nếu promotion_model không có discount_rate, thử lấy từ SKU
-            if not discount_rate:
-                discount_rate = promo_price_info.get('discount_rate')
-                
-            deduction = promo_price_info.get('promotion_deduction_details', {}).get('seller_subtotal_deduction_decimal', '0')
-            
-            # CÔNG THỨC MỚI: Nếu không có discount_rate, hãy tính toán từ Sale/Origin của API
-            if not discount_rate and sale_decimal and origin_decimal and int(origin_decimal) > 0:
-                try:
-                    discount_rate = round(100 - (int(sale_decimal) * 100 / int(origin_decimal)))
-                except: pass
-            
+        if not found_price and promotion_model:
             try:
-                # CÔNG THỨC: Giá hiển thị = Giá gốc - Chiết khấu của Shop
-                # Ưu tiên dùng origin_decimal từ promotion nếu có, nếu không dùng từ SKU
-                base_origin = origin_decimal if (origin_decimal and int(origin_decimal) > 0) else sku_original_price
-                
-                if base_origin and int(base_origin) > 0:
-                    price_val = int(base_origin) - int(deduction)
-                    # TRƯỜNG HỢP ĐẶC BIỆT: Nếu có discount_rate (ví dụ 15%), và giá sau giảm là 17k
-                    # thì giá gốc PHẢI là 20k (17 / 0.85). TikTok đôi khi để origin_decimal rất cao (giá gốc tuyệt đối)
-                    # nhưng UI chỉ hiển thị giá gốc của đợt giảm giá đó.
-                    if discount_rate and int(discount_rate) > 0:
-                        calculated_origin = int(price_val) * 100 // (100 - int(discount_rate))
-                        # Nếu giá gốc tính toán (20k) khác xa giá gốc API (23k), ưu tiên giá gốc tính toán để khớp % UI
-                        if sku_original_price and abs(int(sku_original_price) - calculated_origin) < abs(int(base_origin) - calculated_origin):
-                             base_origin = sku_original_price
-                        elif not base_origin or abs(calculated_origin - int(base_origin)) > 1000:
-                             # Nếu chênh lệch quá lớn, có thể giá gốc UI là giá khác
-                             pass
-
-                    print(f"  ✅ Tính toán giá (BaseOrigin - Deduction): {price_val}")
-                elif sale_decimal:
-                    price_val = int(sale_decimal)
-                    print(f"  ✅ Dùng giá Sale trực tiếp: {price_val}")
-                else:
-                    price_val = 0
-                
-                if price_val > 0:
-                    details['sale_price'] = _format_tiktok_price(price_val)
-                    details['current_price'] = details['sale_price']
-                    
-                    # Ưu tiên hiển thị giá gốc khớp với % giảm giá
-                    final_origin = sku_original_price if sku_original_price else origin_decimal
-                    
-                    # CỰC KỲ QUAN TRỌNG: Nếu có discount_rate (ví dụ 15%), hãy tính toán giá gốc 
-                    # dựa trên giá hiện tại để đảm bảo hiển thị đúng số % người dùng thấy.
-                    if discount_rate and int(discount_rate) > 0:
-                        try:
-                            # Ví dụ: 17.000 / (1 - 0.15) = 20.000
-                            calc_origin = int(price_val) * 100 // (100 - int(discount_rate))
-                            # Chỉ thay thế nếu giá tính toán này "đẹp" hoặc gần với SKU price
-                            final_origin = calc_origin
-                        except: pass
-                    
-                    if final_origin:
-                        details['original_price'] = _format_tiktok_price(final_origin)
-                    
-                    # Thêm thông tin phần trăm giảm giá nếu có
-                    if discount_rate:
-                        details['note'] = f"Giảm -{discount_rate}%"
-                        print(f"  ✅ Phần trăm giảm giá: -{discount_rate}%")
+                promo_price_info = promotion_model.get('promotion_product_price', {}).get('min_price', {})
+                if promo_price_info:
+                    sale_decimal = promo_price_info.get('sale_price_decimal')
+                    origin_decimal = promo_price_info.get('origin_price_decimal') or promo_price_info.get('origin_price_format')
+                    if not discount_rate:
+                        discount_rate = promo_price_info.get('discount_rate') or promo_price_info.get('discount_format')
                         
-                    found_price = True
-                    print(f"  ✅ Kết quả giá cuối cùng: {details['sale_price']} (Gốc: {details.get('original_price', '-')})")
+                    deduction = promo_price_info.get('promotion_deduction_details', {}).get('seller_subtotal_deduction_decimal', '0')
+                    base_origin = origin_decimal if (origin_decimal and int(origin_decimal) > 0) else sku_original_price
+                    
+                    if base_origin and int(base_origin) > 0:
+                        price_val = int(base_origin) - int(deduction)
+                    elif sale_decimal:
+                        price_val = int(sale_decimal)
+                    else:
+                        price_val = 0
+                    
+                    if price_val > 0:
+                        details['sale_price'] = _format_tiktok_price(price_val)
+                        details['current_price'] = details['sale_price']
+                        final_origin = sku_original_price if sku_original_price else origin_decimal
+                        if final_origin:
+                            details['original_price'] = _format_tiktok_price(final_origin)
+                        if discount_rate:
+                            details['note'] = f"Giảm -{discount_rate}" if not str(discount_rate).startswith('-') else str(discount_rate)
+                        found_price = True
             except Exception as e:
-                print(f"  ⚠️ Lỗi tính toán giá: {e}")
+                print(f"  ⚠️ Lỗi tính toán promotion price: {e}")
 
         if not found_price and skus:
             for sku in skus:
                 price_info = sku.get('price', {})
-                sale = price_info.get('sale_price') or price_info.get('sale_price_decimal')
-                original = price_info.get('original_price') or price_info.get('original_price_decimal')
+                sale = price_info.get('sale_price_format') or price_info.get('sale_price') or price_info.get('sale_price_decimal')
+                original = price_info.get('origin_price_format') or price_info.get('original_price') or price_info.get('origin_price_decimal') or price_info.get('original_price_decimal')
                 
                 if sale:
                     details['sale_price'] = _format_tiktok_price(sale)
@@ -836,71 +886,136 @@ def _parse_router_data(router_data, details, expected_name="", target_product_id
         
         # Nếu vẫn không có, thử lấy từ trường price tổng quát
         if not found_price:
-            gen_price = product_model.get('price', {})
-            if not gen_price:
+            gen_price = product_model.get('price', {}) if isinstance(product_model, dict) else {}
+            if not gen_price and isinstance(product_info, dict):
                 gen_price = product_info.get('price', {})
-            min_p = gen_price.get('min_price')
-            max_p = gen_price.get('max_price')
-            if min_p:
-                details['sale_price'] = _format_tiktok_price(min_p)
-                details['current_price'] = details['sale_price']
-                found_price = True
-            if max_p and max_p != min_p:
-                details['original_price'] = _format_tiktok_price(max_p)
+            if not gen_price and isinstance(product_info, dict) and isinstance(product_info.get('product_info'), dict):
+                gen_price = product_info['product_info'].get('price', {})
+            
+            if isinstance(gen_price, dict):
+                real_p = gen_price.get('real_price') or gen_price.get('min_sku_price') or gen_price.get('min_price')
+                orig_p = gen_price.get('original_price') or gen_price.get('min_sku_original_price') or gen_price.get('max_price')
+                disc_p = gen_price.get('discount') or gen_price.get('discount_rate')
+                if real_p:
+                    details['sale_price'] = _format_tiktok_price(real_p)
+                    details['current_price'] = details['sale_price']
+                    found_price = True
+                if orig_p:
+                    details['original_price'] = _format_tiktok_price(orig_p)
+                if disc_p and not details.get('note'):
+                    details['note'] = str(disc_p)
         
         # ─── Seller Info & Shop Link ───
-        def find_shop_name(data):
-            if isinstance(data, dict):
-                if 'shop_name' in data: return data['shop_name']
-                if 'seller_name' in data: return data['seller_name']
-                for v in data.values():
-                    res = find_shop_name(v)
-                    if res: return res
-            elif isinstance(data, list):
-                for item in data:
-                    res = find_shop_name(item)
-                    if res: return res
-            return ""
+        seller_obj = product_model.get('seller') or (product_info.get('seller') if isinstance(product_info, dict) else None)
+        if not seller_obj and isinstance(product_info, dict):
+            seller_obj = product_info.get('shop_info')
+        if isinstance(seller_obj, dict):
+            if seller_obj.get('shop_name') or seller_obj.get('seller_name'):
+                details['shop_name'] = seller_obj.get('shop_name') or seller_obj.get('seller_name')
+            s_id = seller_obj.get('seller_id') or seller_obj.get('id')
+            if s_id and not details.get('shop_link'):
+                details['shop_link'] = f"https://www.tiktok.com/shop/vn/shop/{s_id}"
 
-        seller_name = find_shop_name(loader_data)
-        if seller_name:
-            details['shop_name'] = seller_name
+        if not details.get('shop_name'):
+            def find_shop_name(data):
+                if isinstance(data, dict):
+                    if 'shop_name' in data: return data['shop_name']
+                    if 'seller_name' in data: return data['seller_name']
+                    for v in data.values():
+                        res = find_shop_name(v)
+                        if res: return res
+                elif isinstance(data, list):
+                    for item in data:
+                        res = find_shop_name(item)
+                        if res: return res
+                return ""
+
+            seller_name = find_shop_name(loader_data)
+            if seller_name:
+                details['shop_name'] = seller_name
             
-        seller_id = product_model.get('seller_id', '') or product_info.get('seller_id', '')
-        if seller_id:
-            # Link shop thường có định dạng /shop/vn/shop/{seller_id} hoặc construct từ name
+        seller_id = product_model.get('seller_id', '') or (product_info.get('seller_id', '') if isinstance(product_info, dict) else '')
+        if seller_id and not details.get('shop_link'):
             details['shop_link'] = f"https://www.tiktok.com/shop/vn/shop/{seller_id}"
             
-        # Extract product images
+        # ─── Extract Product Images (Toàn bộ ảnh sản phẩm) ───
         images = []
-        # Danh sách các key tiềm năng chứa ảnh trong product_model
-        image_keys = ['images', 'image_list', 'main_images', 'gallery_images']
-        for k in image_keys:
-            if product_model.get(k):
-                images = product_model.get(k)
-                break
+        image_keys = ['images', 'image_list', 'main_images', 'gallery_images', 'imageList', 'item_images']
+        
+        # 1. Trích xuất từ product_model
+        if isinstance(product_model, dict):
+            for k in image_keys:
+                if product_model.get(k):
+                    images = product_model[k]
+                    break
             
+        # 2. Trích xuất từ product_info hoặc nested product_info
+        if not images and isinstance(product_info, dict):
+            for k in image_keys:
+                if product_info.get(k):
+                    images = product_info[k]
+                    break
+            if not images and isinstance(product_info.get('product_info'), dict):
+                for k in image_keys:
+                    if product_info['product_info'].get(k):
+                        images = product_info['product_info'][k]
+                        break
+
+        # 3. Quét đệ quy tìm mảng ảnh nếu vẫn chưa thấy
         if not images:
-            # Tìm sâu hơn trong product_info
-            images = product_info.get('image_list', []) or product_info.get('images', [])
+            def find_any_images(data):
+                if isinstance(data, dict):
+                    for k in image_keys:
+                        if k in data and isinstance(data[k], list) and len(data[k]) > 0:
+                            first = data[k][0]
+                            if isinstance(first, str) and ('ibyteimg' in first or 'tiktokcdn' in first or 'tos-' in first):
+                                return data[k]
+                            if isinstance(first, dict) and ('url_list' in first or 'uri' in first or 'url' in first or 'thumb_url' in first):
+                                return data[k]
+                    for v in data.values():
+                        res = find_any_images(v)
+                        if res: return res
+                elif isinstance(data, list):
+                    for item in data:
+                        res = find_any_images(item)
+                        if res: return res
+                return None
+            images = find_any_images(product_info) or find_any_images(loader_data) or []
             
         if images:
             img_links = []
             for img in images:
                 if isinstance(img, str):
-                    img_links.append(_clean_tiktok_image_url(img))
+                    cleaned = _clean_tiktok_image_url(img)
+                    if cleaned and cleaned not in img_links:
+                        img_links.append(cleaned)
                     continue
                     
-                # Thử nhiều key khác nhau cho URL list
-                urls = img.get('url_list', []) or img.get('thumb_url_list', []) or img.get('origin_url_list', []) or img.get('thumb_url', [])
-                if urls:
-                    img_links.append(_clean_tiktok_image_url(urls[0]))
-                elif img.get('url'):
-                    img_links.append(_clean_tiktok_image_url(img.get('url')))
+                if isinstance(img, dict):
+                    urls = []
+                    for uk in ['url_list', 'origin_url_list', 'thumb_url_list', 'url', 'thumb_url']:
+                        val = img.get(uk)
+                        if isinstance(val, list) and val:
+                            urls.extend(val)
+                        elif isinstance(val, str) and val:
+                            urls.append(val)
+                    
+                    if urls:
+                        cleaned = _clean_tiktok_image_url(urls[0])
+                        if cleaned and cleaned not in img_links:
+                            img_links.append(cleaned)
+                    elif img.get('uri'):
+                        uri = img['uri']
+                        if not uri.startswith('http'):
+                            uri = f"https://p16-oec-sg.ibyteimg.com/{uri}"
+                        cleaned = _clean_tiktok_image_url(uri)
+                        if cleaned and cleaned not in img_links:
+                            img_links.append(cleaned)
             
             if img_links:
-                details['product_images'] = img_links
+                details['product_images'] = img_links[:10]  # Lấy tối đa 10 ảnh chất lượng cao
                 details['image_url'] = img_links[0]
+                print(f"  ✅ Đã trích xuất thành công {len(details['product_images'])} ảnh sản phẩm!")
         
         return details
         
@@ -1039,21 +1154,23 @@ def _parse_prices_from_html(html, details):
     if not details.get('product_images'):
         if details.get('product_name') or details.get('current_price'):
             if 'captcha' not in html.lower() and 'security check' not in html.lower():
-                # Tìm các link ảnh có cấu trúc của TikTok Shop (thường chứa 'tos-' và 'ibyteimg')
-                # Mở rộng regex để bắt được nhiều loại link ảnh hơn
-                img_matches = re.findall(r'https?://[a-zA-Z0-9.-]+\.(?:ibyteimg|tiktokcdn)\.com/[^"\']+\.(?:jpg|png|webp|jpeg|avif)', html)
+                # Tìm các link ảnh có cấu trúc của TikTok Shop (chứa ibyteimg hoặc tiktokcdn)
+                img_matches = re.findall(r'https?://[a-zA-Z0-9.-]+\.(?:ibyteimg|tiktokcdn|byteimg)\.com/[^\s"\'<>\\]+', html)
                 if img_matches:
-                    # Lọc trùng và làm sạch
                     unique_imgs = list(dict.fromkeys(img_matches))
                     cleaned_imgs = []
                     for u in unique_imgs:
+                        low = u.lower()
+                        if any(x in low for x in ['avatar', 'icon', 'badge', 'logo', 'emoji', 'watermark']):
+                            continue
                         cleaned = _clean_tiktok_image_url(u)
                         if cleaned and cleaned not in cleaned_imgs:
                             cleaned_imgs.append(cleaned)
                     
                     if cleaned_imgs:
-                        details['product_images'] = cleaned_imgs[:10] # Lấy tối đa 10 ảnh
+                        details['product_images'] = cleaned_imgs[:10]  # Lấy tối đa 10 ảnh
                         details['image_url'] = cleaned_imgs[0]
+                        print(f"  ✅ Lấy được {len(details['product_images'])} ảnh từ HTML fallback")
             else:
                 details['product_images'] = []
         else:
@@ -1271,13 +1388,8 @@ async def _scrape_tiktok_product_internal(url, playwright_instance=None, custom_
         
         print(f"  → Requests không lấy được giá ({result['note']}), thử Playwright fallback...")
     
-    # ─── Step 3: Playwright Fallback (Highly Optimized) ───
-    class DummyLock:
-        def __enter__(self): return self
-        def __exit__(self, exc_type, exc_val, exc_tb): pass
-        
-    lock_to_use = DummyLock() if custom_context else _browser_lock
-    with lock_to_use:
+    # ─── Step 3: Playwright Fallback (Protected by Master Browser Lock) ───
+    with _browser_lock:
         print(f"  ⚡ Đang dùng Playwright ngầm (Siêu tốc)...")
         
         from cloakbrowser import launch_persistent_context_async
@@ -1545,17 +1657,54 @@ async def _scrape_tiktok_product_internal(url, playwright_instance=None, custom_
                         if id_match: product_id = id_match.group(1)
                         
                         result = _parse_router_data(router_data, result, target_product_id=product_id)
-                        if result.get('current_price'):
-                            result['status'] = 'Thành công'
-                            if pdp_url:
-                                result['product_link'] = pdp_url
-                            print(f"  ✅ Lấy được giá từ JSON trong Playwright")
-                            return result
                     except Exception as e:
                         print(f"  ⚠ Lỗi parse JSON trong Playwright: {e}")
 
+                # If images are still missing, try DOM evaluate directly on the loaded page
+                if not result.get('product_images'):
+                    try:
+                        dom_images = await page.evaluate('''() => {
+                            const imgs = Array.from(document.querySelectorAll('img'));
+                            const list = [];
+                            for (const img of imgs) {
+                                const src = img.currentSrc || img.src || img.getAttribute('data-src') || '';
+                                if (src && (src.includes('ibyteimg.com') || src.includes('tiktokcdn.com') || src.includes('byteimg.com'))) {
+                                    const rect = img.getBoundingClientRect();
+                                    const w = rect.width || img.naturalWidth || 0;
+                                    const h = rect.height || img.naturalHeight || 0;
+                                    if ((w >= 100 && h >= 100) || src.includes('resize-') || src.includes('tos-')) {
+                                        const low = src.toLowerCase();
+                                        if (!low.includes('avatar') && !low.includes('icon') && !low.includes('badge') && !low.includes('emoji')) {
+                                            list.push(src);
+                                        }
+                                    }
+                                }
+                            }
+                            return list;
+                        }''')
+                        if dom_images:
+                            cleaned_dom_imgs = []
+                            for u in dom_images:
+                                cu = _clean_tiktok_image_url(u)
+                                if cu and cu not in cleaned_dom_imgs:
+                                    cleaned_dom_imgs.append(cu)
+                            if cleaned_dom_imgs:
+                                result['product_images'] = cleaned_dom_imgs[:10]
+                                result['image_url'] = cleaned_dom_imgs[0]
+                                print(f"  ✅ Đã trích xuất {len(result['product_images'])} ảnh từ DOM!")
+                    except Exception as e:
+                        print(f"  ⚠ Lỗi lấy ảnh từ DOM: {e}")
+
                 # Final parsing from HTML (fallback)
-                result = _parse_prices_from_html(page_content, result)
+                if not result.get('current_price') or not result.get('product_images'):
+                    result = _parse_prices_from_html(page_content, result)
+                    
+                if result.get('current_price'):
+                    result['status'] = 'Thành công'
+                    if pdp_url:
+                        result['product_link'] = pdp_url
+                    print(f"  ✅ Lấy được thông tin từ PDP trong Playwright (Ảnh: {len(result.get('product_images', []))})")
+                    return result
                 
             if (result.get('current_price') or result.get('sale_price')) and (pdp_url or not is_on_video_page):
                 result['status'] = 'Thành công'
@@ -1699,17 +1848,28 @@ async def _scrape_tiktok_product_internal(url, playwright_instance=None, custom_
                             except:
                                 pass
                         
-                        # Fallback: parse HTML
-                        result = _parse_prices_from_html(new_content, result)
-                        
-                        # Đảm bảo product_link luôn có giá trị
-                        if pdp_url and not result.get('product_link'):
-                            result['product_link'] = pdp_url
-                        
-                        if result.get('current_price') or result.get('sale_price'):
-                            result['status'] = 'Thành công'
-                            if 'Lỗi' in result.get('note', '') or 'Không tìm thấy' in result.get('note', ''):
-                                result['note'] = ''
+                        # Chỉ parse PDP data nếu có PDP URL hoặc đang ở trang sản phẩm
+                        if pdp_url or not is_on_video_page:
+                            # Fallback: parse HTML
+                            result = _parse_prices_from_html(new_content, result)
+                            
+                            # Đảm bảo product_link luôn có giá trị
+                            if pdp_url and not result.get('product_link'):
+                                result['product_link'] = pdp_url
+                            
+                            if result.get('current_price') or result.get('sale_price'):
+                                result['status'] = 'Thành công'
+                                if 'Lỗi' in result.get('note', '') or 'Không tìm thấy' in result.get('note', ''):
+                                    result['note'] = ''
+                        else:
+                            # Đang ở trang video nhưng video không gắn link TikTok Shop
+                            print("  ℹ️ Video thông thường (không gắn link sản phẩm TikTok Shop)")
+                            result['status'] = 'Video không có giỏ hàng'
+                            result['note'] = 'Video giải trí / không gắn link TikTok Shop'
+                            result['product_link'] = ''
+                            result['current_price'] = ''
+                            result['original_price'] = ''
+                            result['sale_price'] = ''
                     else:
                         print("  ❌ Auto-bypass CAPTCHA thất bại. Sẽ tự động thử lại ở chu kỳ tiếp theo.")
                         result['note'] = 'Bị CAPTCHA (Đang tự động thử lại)'
@@ -1726,7 +1886,14 @@ async def _scrape_tiktok_product_internal(url, playwright_instance=None, custom_
                         except: pass
                         return result
                 elif not result.get('qr_b64'):
-                    if not pdp_url:
+                    if is_on_video_page and not pdp_url:
+                        result['status'] = 'Video không có giỏ hàng'
+                        result['note'] = 'Video giải trí / không gắn link TikTok Shop'
+                        result['product_link'] = ''
+                        result['current_price'] = ''
+                        result['original_price'] = ''
+                        result['sale_price'] = ''
+                    elif not pdp_url:
                         result['status'] = 'Lỗi'
                         result['note'] = 'Không tìm thấy link sản phẩm'
                     else:

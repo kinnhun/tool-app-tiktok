@@ -89,6 +89,9 @@ async def extract_favorites(session_dir, seen_links=None, target_url=None):
                 r"C:\Program Files\Google\Chrome\Application\chrome.exe",
                 r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
                 os.path.expanduser(r"~\AppData\Local\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright\chromium-1243\chrome-win64\chrome.exe"),
+                os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright\chromium-1200\chrome-win64\chrome.exe"),
+                os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright\chromium-1148\chrome-win\chrome.exe"),
                 r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
             ]
             for path in chrome_paths:
@@ -142,13 +145,14 @@ async def extract_favorites(session_dir, seen_links=None, target_url=None):
             except Exception as se:
                 print(f"⚠️ Không thể kích hoạt Stealth: {se}")
             
-            # TỐI ƯU HÓA: Chặn tải hình ảnh và media để siêu tiết kiệm RAM và Bandwidth
-            async def intercept_route(route):
-                if route.request.resource_type in ["image", "media"]:
+            # Chặn tự động mở App TikTok
+            async def block_redirects(route):
+                url = route.request.url
+                if url.startswith("snssdk") or url.startswith("intent") or "tiktokv.com/redirect" in url:
                     await route.abort()
                 else:
                     await route.continue_()
-            await page.route("**/*", intercept_route)
+            await page.route("**/*", block_redirects)
             
             # Khai báo biến lưu video từ API
             api_links = []
@@ -174,7 +178,14 @@ async def extract_favorites(session_dir, seen_links=None, target_url=None):
             page.on("response", lambda response: asyncio.create_task(handle_response(response)))
             
             # Tới trang profile (Sử dụng URL trực tiếp từ người dùng nếu có)
-            profile_url = target_url if target_url and target_url.startswith("http") else "https://www.tiktok.com/profile"
+            if target_url and str(target_url).startswith("http"):
+                profile_url = str(target_url)
+            elif target_url and str(target_url).startswith("@"):
+                profile_url = f"https://www.tiktok.com/{target_url}"
+            elif target_url:
+                profile_url = f"https://www.tiktok.com/@{str(target_url).lstrip('@')}"
+            else:
+                profile_url = "https://www.tiktok.com/profile"
             # TÌM API TEMPLATE (Bắt request hợp lệ đầu tiên của TikTok cho tab Đã thích)
             target_api = None
             async def intercept_api(response):
@@ -278,7 +289,15 @@ async def extract_favorites(session_dir, seen_links=None, target_url=None):
                 
             add_sync_log("🎯 Đã thiết lập xong đường dẫn API bí mật. Bắt đầu tải dữ liệu...")
             
-            # Tiêm mã JS để tự động cuộn (fetch) qua API mà không cần đụng vào giao diện
+            # Cuộn trang tự nhiên để kích hoạt TikTok tự nạp thêm video qua API chuẩn có chữ ký
+            add_sync_log("Đang cuộn trang để nạp thêm danh sách video Đã thích...")
+            for scroll_step in range(6):
+                await page.mouse.wheel(0, 1800)
+                await asyncio.sleep(1.2)
+                if seen_links and sum(1 for l in api_links if l in seen_links) >= 15:
+                    break
+            
+            # Tiêm mã JS để tự động quét sâu hơn qua API trong trình duyệt
             import urllib.parse
             parsed = urllib.parse.urlparse(target_api)
             params = dict(urllib.parse.parse_qsl(parsed.query))
@@ -296,12 +315,11 @@ async def extract_favorites(session_dir, seen_links=None, target_url=None):
                 let results = [];
                 let seen_links = {json.dumps(seen_links) if seen_links else '[]'};
                 
-                // Tránh việc dừng sớm do video được ghim hoặc thuật toán trả về lộn xộn.
                 // Chỉ dừng khi gặp LIÊN TIẾP 15 video đã tồn tại trong cache (hoặc quét tối đa 20 trang).
                 let consecutive_seen = 0; 
                 let stopFetching = false;
                 
-                for (let i = 0; i < 20; i++) {{ // Quét sâu hơn (20 trang) để đảm bảo không sót
+                for (let i = 0; i < 20; i++) {{
                     if (!hasMore || stopFetching) break;
                     
                     let urlObj = new URL(baseApiUrl);
@@ -318,10 +336,14 @@ async def extract_favorites(session_dir, seen_links=None, target_url=None):
                                 if (video_id && author) {{
                                     const link = `https://www.tiktok.com/@${{author}}/video/${{video_id}}`;
                                     
-                                    // So sánh với 5 link đã lưu trong bộ nhớ đệm
-                                    if (recent_cached_links.includes(link)) {{
-                                        stopFetching = true;
-                                        break;
+                                    if (seen_links.includes(link)) {{
+                                        consecutive_seen++;
+                                        if (consecutive_seen >= 15) {{
+                                            stopFetching = true;
+                                            break;
+                                        }}
+                                    }} else {{
+                                        consecutive_seen = 0;
                                     }}
                                     
                                     if (!results.includes(link)) {{
@@ -371,9 +393,7 @@ async def extract_favorites(session_dir, seen_links=None, target_url=None):
         if l not in unique_links:
             unique_links.append(l)
             
-    # Trả về toàn bộ (nếu cuộn tới nhớ đệm) hoặc 10 video đầu (nếu chạy lần đầu)
-    if not seen_links or len(seen_links) == 0:
-        return unique_links[:10]
+    # Trả về toàn bộ danh sách quét được (không cắt ngắn cứng 10 video)
     return unique_links
 
 def process_account_sync_multiple(profile_name, configs, target_url):
@@ -416,13 +436,15 @@ def process_account_sync_multiple(profile_name, configs, target_url):
             
         add_sync_log(f"Đang kiểm tra danh sách Đã thích của kênh {target_url}...")
         
-        # Chạy async lấy link
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            recent_links = loop.run_until_complete(extract_favorites(session_dir, seen_links, target_url=target_url))
-        finally:
-            loop.close()
+        # Chạy async lấy link dưới sự bảo vệ của browser lock (không chạy song song với cào sản phẩm)
+        from scraper.tiktok_scraper import _browser_lock
+        with _browser_lock:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                recent_links = loop.run_until_complete(extract_favorites(session_dir, seen_links, target_url=target_url))
+            finally:
+                loop.close()
             
         if not recent_links:
             if is_first_run:
@@ -529,8 +551,8 @@ def process_account_sync_multiple(profile_name, configs, target_url):
             if not config_id: continue
             
             if config_id not in synced_sheet_ids:
-                # Sheet mới thêm: lấy tối đa 10 video mới nhất
-                links_for_this_sheet = updated_seen_links[:10]
+                # Sheet mới thêm: lấy tối đa 50 video mới nhất
+                links_for_this_sheet = updated_seen_links[:50]
             else:
                 # Sheet cũ: chỉ lấy video mới
                 links_for_this_sheet = new_links_to_push
@@ -662,6 +684,12 @@ def sync_all_accounts_job():
                     username = parts[1].split('?')[0].split('/')[0]
                     safe_profile_name = f"@{username}"
                     target_url = f"https://www.tiktok.com/@{username}"
+            elif profile_input.startswith("@"):
+                safe_profile_name = profile_input
+                target_url = f"https://www.tiktok.com/{profile_input}"
+            else:
+                safe_profile_name = f"@{profile_input}"
+                target_url = f"https://www.tiktok.com/@{profile_input}"
                     
             if safe_profile_name not in grouped_configs:
                 grouped_configs[safe_profile_name] = {

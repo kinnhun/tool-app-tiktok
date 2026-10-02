@@ -14,6 +14,22 @@ import re
 if getattr(sys, 'frozen', False):
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright")
 
+# Tự động gán đường dẫn Chromium thực tế cho CloakBrowser để tránh lỗi crash nhị phân mặc định
+if not os.environ.get("CLOAKBROWSER_BINARY_PATH"):
+    candidates = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright\chromium-1243\chrome-win64\chrome.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright\chromium-1200\chrome-win64\chrome.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright\chromium-1148\chrome-win\chrome.exe"),
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            os.environ["CLOAKBROWSER_BINARY_PATH"] = p
+            break
+
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
@@ -390,7 +406,7 @@ def api_quick_add_scrape():
         all_values = worksheet.get_all_values()
         new_row_idx = len(all_values)
         
-        # 3. Scrape
+        # 3. Scrape (Playwright bên trong đã được bảo vệ bởi master browser lock)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -460,6 +476,18 @@ def _scrape_worker_thread():
 threading.Thread(target=_scrape_worker_thread, daemon=True).start()
 
 _is_sync_queued = False
+_sync_enabled = True  # Cho phép bật/tắt quét tự động
+_sync_interval_seconds = 600  # Mặc định 10 phút thay vì 2 phút để tránh dồn dập
+
+def is_any_scraping_busy():
+    """Kiểm tra xem hệ thống có đang bận cào sản phẩm hay không."""
+    # 1. Có task cào sản phẩm đang chờ trong hàng đợi
+    if not _scrape_task_queue.empty():
+        return True
+    # 2. Có batch job nào đang chạy
+    if any(job.get('running') for job in processing_jobs.values()):
+        return True
+    return False
 
 def _sync_wrapper():
     global _is_sync_queued
@@ -470,30 +498,40 @@ def _sync_wrapper():
         _is_sync_queued = False
 
 def global_background_scheduler():
-    """Lập lịch chạy ngầm quét profile mỗi 2 phút, đưa vào hàng đợi tập trung."""
+    """Lập lịch chạy ngầm quét profile định kỳ. CHỈ chạy khi hàng đợi cào sản phẩm đã hoàn tất và rảnh rỗi."""
     import time
     from scraper.favorites_syncer import load_sync_configs, sync_status, add_sync_log
     
-    # Chờ 10 giây ban đầu để hệ thống ổn định
-    time.sleep(10)
+    # Chờ 15 giây ban đầu để hệ thống ổn định
+    time.sleep(15)
     
-    global _is_sync_queued
+    global _is_sync_queued, _sync_enabled, _sync_interval_seconds
     
     while True:
         try:
-            if load_sync_configs():
-                # Chỉ đưa vào hàng đợi nếu không có job nào đang chạy và chưa có job nào nằm chờ
+            if _sync_enabled and load_sync_configs():
+                # KIỂM TRA ĐIỀU KIỆN TIÊN QUYẾT: Hệ thống có đang bận cào sản phẩm không?
+                if is_any_scraping_busy():
+                    # Đang bận cào sản phẩm -> NHƯỜNG ƯU TIÊN HOÀN TOÀN, không đưa quét profile vào hàng đợi!
+                    print(f"⏳ Hệ thống đang bận cào sản phẩm (Hàng đợi: {_scrape_task_queue.qsize()} task / Đang chạy Batch Job). Tạm hoãn quét Profile...")
+                    time.sleep(30)
+                    continue
+                
+                # Chỉ đưa vào hàng đợi nếu không có sync job nào đang chạy và chưa có task sync trong queue
                 if not sync_status.get("is_running") and not _is_sync_queued:
-                    print("🕒 [Lịch trình 2 phút] Đưa tác vụ Quét Profile vào hàng đợi tập trung...")
-                    _is_sync_queued = True
-                    _scrape_task_queue.put(_sync_wrapper)
+                    configs = load_sync_configs()
+                    active_configs = [c for c in configs if c.get('active')]
+                    if active_configs:
+                        print(f"🕒 [Lịch trình định kỳ] Hàng đợi rảnh rỗi, bắt đầu đưa tác vụ Quét Profile ({len(active_configs)} kênh) vào hàng đợi...")
+                        _is_sync_queued = True
+                        _scrape_task_queue.put(_sync_wrapper)
         except Exception as e:
             try:
                 add_sync_log(f"Lỗi global scheduler: {e}")
             except:
                 pass
             
-        time.sleep(120)
+        time.sleep(_sync_interval_seconds)
 
 # Khởi động luồng lập lịch
 threading.Thread(target=global_background_scheduler, daemon=True).start()
@@ -1384,6 +1422,67 @@ def api_run_status(config_id):
     return jsonify({'success': False, 'message': 'Không có job nào đang chạy.'})
 
 
+@app.route('/api/run/<config_id>/stop', methods=['POST'])
+def api_stop_scraper(config_id):
+    """Dừng tiến trình cào dữ liệu cho một cấu hình."""
+    if config_id in processing_jobs and processing_jobs[config_id].get('running'):
+        processing_jobs[config_id]['running'] = False
+        processing_jobs[config_id]['stopped'] = True
+        processing_jobs[config_id]['log'].append('⏹ Đang dừng tiến trình cào dữ liệu...')
+        return jsonify({'success': True, 'message': 'Đã gửi lệnh dừng!'})
+    return jsonify({'success': False, 'message': 'Không có tiến trình nào đang chạy cho cấu hình này.'})
+
+
+@app.route('/api/sync-control', methods=['GET', 'POST'])
+def api_sync_control():
+    """Bật/tắt quét ngầm định kỳ và điều chỉnh chu kỳ."""
+    global _sync_enabled, _sync_interval_seconds
+    if request.method == 'POST':
+        data = request.get_json(force=True, silent=True) or {}
+        if 'enabled' in data:
+            _sync_enabled = bool(data['enabled'])
+        if 'interval_seconds' in data:
+            try:
+                _sync_interval_seconds = max(60, int(data['interval_seconds']))
+            except (ValueError, TypeError):
+                pass
+        return jsonify({
+            'success': True,
+            'enabled': _sync_enabled,
+            'interval_seconds': _sync_interval_seconds,
+            'message': f"Đã {'bật' if _sync_enabled else 'tắt'} tự động quét ngầm (Chu kỳ: {_sync_interval_seconds // 60} phút)."
+        })
+    return jsonify({
+        'success': True,
+        'enabled': _sync_enabled,
+        'interval_seconds': _sync_interval_seconds
+    })
+
+
+@app.route('/api/queue-status', methods=['GET'])
+def api_queue_status():
+    """Trả về trạng thái hàng đợi tập trung và tiến trình bận."""
+    active_jobs = [
+        {
+            'id': cid, 
+            'current_link': j.get('current_link', ''), 
+            'processed': j.get('processed', 0), 
+            'total': j.get('total', 0)
+        }
+        for cid, j in processing_jobs.items() if j.get('running')
+    ]
+    return jsonify({
+        'success': True,
+        'queue_size': _scrape_task_queue.qsize(),
+        'is_busy': is_any_scraping_busy(),
+        'active_jobs': active_jobs,
+        'sync_enabled': _sync_enabled,
+        'sync_interval_seconds': _sync_interval_seconds,
+        'sync_status': favorites_syncer.sync_status
+    })
+
+
+
 
 def _run_scraper_thread(config_id, config):
     """Background thread that runs the scraper."""
@@ -1522,23 +1621,20 @@ def _run_scraper_thread(config_id, config):
                 await playwright_mgr.__aexit__(None, None, None)
                 return
 
-            # Sử dụng Semaphore để giới hạn tối đa 5 tab chạy đồng thời (Tăng tốc độ)
-            sem = asyncio.Semaphore(5)
-            
-            async def process_one(item):
-                async with sem:
-                    if not job['running']:
-                        return
+            try:
+                # Xử lý tuần tự từng link một để đảm bảo ổn định 100%, không bị xung đột chuột giải CAPTCHA
+                for idx, item in enumerate(links):
+                    if not job.get('running'):
+                        job['log'].append(f'⏹ Đã dừng tiến trình theo yêu cầu tại dòng {item.get("row")}.')
+                        break
                     
                     row = item['row']
                     url = item['link']
-                    
                     job['current_link'] = url
                     
-                    # Cập nhật trạng thái thành "Đang xử lý"
+                    job['log'].append(f'🔄 [{idx+1}/{len(links)}] Đang cào dòng {row}...')
                     set_row_status(spreadsheet_id, tab_name, row, status_col, 'Đang xử lý')
                     
-                    # Gọi hàm scrape_tiktok_product với custom_context
                     try:
                         result = await scrape_tiktok_product(
                             url, 
@@ -1558,18 +1654,18 @@ def _run_scraper_thread(config_id, config):
                     job['processed'] += 1
                     if result.get('status') == 'Thành công':
                         job['success'] += 1
-                        job['log'].append(f'  ✅ Dòng {row}: {result.get("product_name", "N/A")[:30]}')
+                        price_info = result.get('sale_price') or result.get('current_price') or 'Đã lấy giá'
+                        job['log'].append(f'  ✅ [{idx+1}/{len(links)}] Dòng {row}: {result.get("product_name", "N/A")[:30]} ({price_info})')
                     else:
                         job['error'] += 1
-                        job['log'].append(f'  ❌ Dòng {row}: {result.get("status", "Lỗi")}')
+                        job['log'].append(f'  ❌ [{idx+1}/{len(links)}] Dòng {row}: {result.get("status", "Lỗi")} - {result.get("note", "")[:40]}')
                     
                     if len(job['log']) > 50:
                         job['log'] = job['log'][-50:]
-
-            try:
-                # Chạy song song tất cả các link (giới hạn bởi Semaphore)
-                tasks = [process_one(item) for item in links]
-                await asyncio.gather(*tasks)
+                        
+                    # Nghỉ ngắn giữa các link để tránh TikTok phát hiện
+                    if job.get('running') and idx < len(links) - 1:
+                        await asyncio.sleep(1.5)
             finally:
                 if context:
                     await context.close()
@@ -1589,11 +1685,15 @@ def _run_scraper_thread(config_id, config):
             'status': 'Đã kết nối'
         })
         
-        job['log'].append(f'🏁 Hoàn thành! Thành công: {job["success"]}/{job["total"]}, Lỗi: {job["error"]}')
+        if job.get('stopped'):
+            job['log'].append(f'⏹ Đã dừng tiến trình! Đã xử lý {job["processed"]}/{job["total"]}')
+        else:
+            job['log'].append(f'🏁 Hoàn thành! Thành công: {job["success"]}/{job["total"]}, Lỗi: {job["error"]}')
         
     except Exception as e:
         job['log'].append(f'❌ Lỗi nghiêm trọng: {str(e)}')
     finally:
+        job['running'] = False
         if 'lock' in locals() and lock:
             try:
                 lock.release()

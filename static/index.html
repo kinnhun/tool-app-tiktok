@@ -94,6 +94,18 @@
           </div>
         </div>
 
+        <!-- ── QUEUE STATUS BAR ── -->
+        <div id="dashboardQueueBar" class="card" style="margin-bottom: 20px; padding: 12px 18px; display: flex; justify-content: space-between; align-items: center; background: rgba(0, 163, 255, 0.05); border: 1px solid rgba(0, 163, 255, 0.2);">
+          <div style="display: flex; align-items: center; gap: 10px; font-size: 13px;">
+            <span>🚦 <strong>Hàng đợi hệ thống:</strong></span>
+            <span id="dashQueueStatusBadge" class="badge badge-success">🟢 Rảnh rỗi</span>
+            <span id="dashQueueInfo" style="color: var(--text-muted); font-size: 12px;">(0 tác vụ đang chờ)</span>
+          </div>
+          <div id="dashSyncInfo" style="font-size: 12px; color: var(--text-muted);">
+            🔄 Tự động quét kênh: <strong id="dashSyncText" style="color: var(--success);">Đang bật</strong>
+          </div>
+        </div>
+
         <!-- ── QUICK PASTE ── -->
         <div class="card" id="quickPasteCard"
           style="margin-bottom: 24px; border: 2px solid var(--accent); background: rgba(0, 163, 255, 0.03);">
@@ -307,7 +319,34 @@
       <section id="sec-auto-sync" class="section">
         <div class="page-header">
           <h2>🔄 Tự động đồng bộ Video Đã Thích</h2>
-          <p>Tự động lấy video bạn ấn "Đã Thích" trên TikTok (công khai) và điền vào Google Sheet (chạy nền mỗi 2 phút)</p>
+          <p>Tự động lấy video bạn ấn "Đã Thích" trên TikTok (công khai) và điền vào Google Sheet theo hàng đợi tập trung (không chen ngang cào sản phẩm)</p>
+        </div>
+
+        <!-- ── AUTO-SYNC CONTROLLER & QUEUE STATUS ── -->
+        <div class="card" style="margin-bottom: 20px; border: 1px solid var(--border-color); background: rgba(255,255,255,0.02);">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <div style="font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+                <span>⚡ Trạng thái Hàng Đợi:</span>
+                <span id="queueBadge" class="badge badge-success">🟢 Rảnh rỗi</span>
+              </div>
+              <div id="queueDetailText" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Hàng đợi: 0 task chờ | Quét ngầm: Đang bật
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <label style="font-size: 13px; font-weight: 500; margin: 0;">Chu kỳ quét:</label>
+              <select id="syncIntervalSelect" class="form-select" style="width: 120px; height: 36px; padding: 4px 8px; font-size: 13px;" onchange="changeSyncInterval(this.value)">
+                <option value="300">5 phút</option>
+                <option value="600" selected>10 phút</option>
+                <option value="900">15 phút</option>
+                <option value="1800">30 phút</option>
+              </select>
+              <button id="btnToggleAutoSync" class="btn btn-secondary btn-sm" onclick="toggleAutoSync()">
+                ⏸ Tạm dừng quét ngầm
+              </button>
+            </div>
+          </div>
         </div>
 
         <div class="card" style="margin-bottom: 20px;">

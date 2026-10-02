@@ -366,6 +366,13 @@ def update_row(spreadsheet_id, tab_name, row_number, data, column_mapping):
             cell = f'{col}{row_number}'
             updates.append({'range': cell, 'values': [[data['note']]]})
         
+        # Primary Image column (if mapped)
+        if 'image_url' in data and 'image_col' in column_mapping:
+            col = column_mapping['image_col']
+            cell = f'{col}{row_number}'
+            safe_url = data['image_url'].strip().replace('"', '""')
+            updates.append({'range': cell, 'values': [[safe_url]]})
+
         # Batch update
         if updates:
             # Product images (append to the end of the mapped columns)
@@ -390,14 +397,22 @@ def update_row(spreadsheet_id, tab_name, row_number, data, column_mapping):
                     max_idx = max(col_to_idx(c) for c in col_letters)
                     start_col_idx = max_idx + 1
                     
+                    # Xác định dấu ngăn cách hàm theo locale của bảng tính (mặc định ';' cho VN)
+                    delim = ';'
+                    try:
+                        loc = spreadsheet.fetch_sheet_metadata().get('properties', {}).get('locale', 'vi_VN')
+                        if not any(loc.lower().startswith(x) for x in ['vi', 'fr', 'de', 'es', 'it', 'nl', 'ru', 'pt']):
+                            delim = ','
+                    except:
+                        delim = ';'
+                    
                     for i, img_url in enumerate(data['product_images']):
                         # Bỏ giới hạn 5 ảnh để lấy toàn bộ ảnh theo yêu cầu
                         col = idx_to_col(start_col_idx + i)
                         cell = f'{col}{row_number}'
                         # Dùng HYPERLINK + IMAGE với tham số size (mode 4, width 250, height 250)
-                        # Dùng dấu chấm phẩy ; cho Google Sheet tiếng Việt
                         safe_url = img_url.strip().replace('"', '""')
-                        img_val = f'=HYPERLINK("{safe_url}"; IMAGE("{safe_url}"; 4; 250; 250))' if img_url else ''
+                        img_val = f'=HYPERLINK("{safe_url}"{delim} IMAGE("{safe_url}"{delim} 4{delim} 250{delim} 250))' if img_url else ''
                         updates.append({'range': cell, 'values': [[img_val]]})
 
             if updates:
